@@ -17,7 +17,7 @@ UI realizzata con HTML + AlpineJS + HTMX.
 ## Prerequisiti
 
 - Python 3.10+
-- `pip`
+- `uv`
 - Backend di stampa locale:
   - Linux/macOS: CUPS (`lp`, `lpstat`) installati e configurati
     (`ipptool` consigliato per mostrare i livelli toner)
@@ -26,24 +26,11 @@ UI realizzata con HTML + AlpineJS + HTMX.
 ## Avvio
 
 ```bash
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install --upgrade pip tomli
-python -c "import subprocess, sys, tomli; deps = tomli.load(open('pyproject.toml', 'rb'))['project']['dependencies']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])"
-uvicorn app:app --reload
+uv sync
+uv run uvicorn app:app --reload
 ```
 
 Apri `http://127.0.0.1:8000`.
-
-Su Linux/macOS usa:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip tomli
-python -c "import subprocess, sys, tomli; deps = tomli.load(open('pyproject.toml', 'rb'))['project']['dependencies']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])"
-uvicorn app:app --reload
-```
 
 ## Avvio con Docker + CUPS
 
