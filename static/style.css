@@ -1,0 +1,272 @@
+:root {
+  --bg-a: #e9eef4;
+  --bg-b: #f7f9fc;
+  --ink: #13233b;
+  --muted: #4e627d;
+  --panel: #ffffff;
+  --border: #d9e1ed;
+  --accent: #0c6dfd;
+  --ok: #17783e;
+  --warn: #9a5a08;
+  --err: #a61e2d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 10% 20%, #d6e4ff 0%, transparent 28%),
+    radial-gradient(circle at 90% 10%, #fdeed4 0%, transparent 24%),
+    linear-gradient(160deg, var(--bg-a), var(--bg-b));
+  font-family: "Fira Sans", "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+.page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+.hero h1 {
+  margin: 0.1rem 0 0.5rem;
+  font-size: clamp(1.9rem, 4vw, 2.5rem);
+}
+
+.hero p {
+  margin-top: 0;
+  color: var(--muted);
+}
+
+.kicker {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 14px 40px rgba(19, 35, 59, 0.08);
+  padding: 1rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.9rem;
+}
+
+label span,
+fieldset legend {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+input[type="file"],
+input[type="number"],
+input[type="password"],
+select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.95rem;
+  background: #fff;
+}
+
+.field-note {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+fieldset {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.inline-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-right: 1rem;
+  color: var(--ink);
+}
+
+.toggle {
+  margin-top: 0.4rem;
+}
+
+.btn {
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0f77ff, #0a5fe0);
+  color: #fff;
+  padding: 0.7rem 1rem;
+  font-size: 0.96rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.upload-meter {
+  margin-top: 0.9rem;
+}
+
+.track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #dce5f3;
+}
+
+.fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #1c86ff, #2eb67d);
+  transition: width 0.2s ease-out;
+}
+
+.alert {
+  border-radius: 10px;
+  padding: 0.8rem 0.9rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid transparent;
+  background: #fff;
+}
+
+.alert-error {
+  border-color: #f2ccd3;
+  color: var(--err);
+}
+
+.alert-warn {
+  border-color: #f3dfbd;
+  color: var(--warn);
+}
+
+.job-area {
+  margin-top: 1.1rem;
+}
+
+.job-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 12px 25px rgba(19, 35, 59, 0.07);
+}
+
+.job-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.job-card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+
+.meta dt {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.meta dd {
+  margin: 0.2rem 0 0;
+  font-size: 0.94rem;
+}
+
+.progress {
+  height: 10px;
+  background: #dce5f3;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #1576ff, #2ab578);
+  transition: width 0.4s ease;
+}
+
+.status-chip {
+  margin: 0;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: #edf2fb;
+}
+
+.status-completed {
+  color: var(--ok);
+  background: #e5f8ed;
+}
+
+.status-failed {
+  color: var(--err);
+  background: #fdecee;
+}
+
+.message {
+  margin-bottom: 0;
+}
+
+.queue-id {
+  margin-top: 0.8rem;
+}
+
+.error-detail {
+  margin: 0.8rem 0 0;
+  color: var(--err);
+  background: #fff3f5;
+  border: 1px solid #f4c8cf;
+  border-radius: 10px;
+  padding: 0.6rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+[x-cloak] {
+  display: none !important;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: 1.1rem 0.8rem 2rem;
+  }
+
+  .job-card header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

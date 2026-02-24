@@ -1,0 +1,14 @@
+services:
+  webprinter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webprinter
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      PRINTER_NAME: "${PRINTER_NAME}"
+      PRINTER_ADDRESS: "${PRINTER_ADDRESS}"
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8000"
+    restart: unless-stopped

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebPrinter</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page" x-data="{sending:false, uploadProgress:0}">
+    <header class="hero">
+      <p class="kicker">LOCAL PRINTING</p>
+      <h1>WebPrinter</h1>
+      <p>Carica immagini, testo o PDF e inviali alla stampante locale con opzioni di stampa.</p>
+    </header>
+
+    {% if backend_error %}
+      <section class="alert alert-error">
+        <strong>Backend non pronto:</strong> {{ backend_error }}
+      </section>
+    {% endif %}
+
+    {% if not printers %}
+      <section class="alert alert-warn">
+        Nessuna stampante trovata. Controlla la configurazione del sistema.
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <form
+        id="print-form"
+        class="form-grid"
+        hx-post="/jobs"
+        hx-target="#job-area"
+        hx-swap="innerHTML"
+        hx-encoding="multipart/form-data"
+        x-on:submit="sending=true; uploadProgress=0"
+        x-on:htmx:before-request.window="
+          if ($event.detail.elt && $event.detail.elt.id === 'print-form') {
+            sending = true;
+            uploadProgress = 0;
+          }
+        "
+        x-on:htmx:after-request.window="
+          if ($event.detail.elt && $event.detail.elt.id === 'print-form') {
+            sending = false;
+            if (uploadProgress < 100) uploadProgress = 100;
+            setTimeout(() => uploadProgress = 0, 800);
+          }
+        "
+        x-on:htmx:xhr:progress.window="
+          if (
+            $event.detail.elt &&
+            $event.detail.elt.id === 'print-form' &&
+            $event.detail.total > 0
+          ) {
+            uploadProgress = Math.round(($event.detail.loaded / $event.detail.total) * 100);
+          }
+        "
+      >
+        <label>
+          <span>File</span>
+          <input
+            type="file"
+            name="file"
+            accept=".pdf,.txt,image/*"
+            required
+            {% if not backend_ready %}disabled{% endif %}
+          >
+        </label>
+
+        <label>
+          <span>Stampante</span>
+          <select name="printer" {% if not backend_ready or not printers %}disabled{% endif %}>
+            {% for p in printers %}
+              <option value="{{ p }}" {% if p == default_printer %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+          </select>
+        </label>
+
+        <fieldset>
+          <legend>Colore</legend>
+          <label class="inline-option">
+            <input type="radio" name="color_mode" value="bw" checked {% if not backend_ready %}disabled{% endif %}>
+            <span>Bianco/Nero</span>
+          </label>
+          <label class="inline-option">
+            <input type="radio" name="color_mode" value="color" {% if not backend_ready %}disabled{% endif %}>
+            <span>Colori</span>
+          </label>
+        </fieldset>
+
+        <label>
+          <span>Copie</span>
+          <input
+            type="number"
+            name="copies"
+            min="1"
+            max="99"
+            value="1"
+            {% if not backend_ready %}disabled{% endif %}
+          >
+        </label>
+
+        <label>
+          <span>Password PDF (opzionale)</span>
+          <input
+            type="password"
+            name="pdf_password"
+            autocomplete="off"
+            placeholder="Solo per PDF protetti"
+            {% if not backend_ready %}disabled{% endif %}
+          >
+          <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
+        </label>
+
+        <label class="inline-option toggle">
+          <input type="checkbox" name="duplex" value="true" {% if not backend_ready %}disabled{% endif %}>
+          <span>Fronte/retro</span>
+        </label>
+
+        <button
+          type="submit"
+          class="btn"
+          {% if not backend_ready or not printers %}disabled{% endif %}
+        >
+          Invia in stampa
+        </button>
+      </form>
+
+      <div class="upload-meter" x-show="sending || uploadProgress > 0" x-cloak>
+        <div class="track">
+          <div class="fill" :style="`width:${uploadProgress}%`"></div>
+        </div>
+        <p>Upload: <strong x-text="`${uploadProgress}%`"></strong></p>
+      </div>
+    </section>
+
+    <section id="job-area" class="job-area"></section>
+  </main>
+</body>
+</html>
