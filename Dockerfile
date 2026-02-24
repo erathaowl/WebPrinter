@@ -12,6 +12,9 @@ RUN apt-get update \
         cups-client \
         cups-ipp-utils \
         cups-filters \
+        curl \
+        nmap \
+        net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
