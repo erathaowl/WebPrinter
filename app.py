@@ -15,7 +15,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader, PdfWriter
 
-from print_backend import PrintBackendError, PrintOptions, build_backend
+from print_backend import (
+    PrintBackendError,
+    PrintOptions,
+    PrinterStatusSnapshot,
+    build_backend,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,6 +47,12 @@ STATUS_LABELS = {
     "printing": "In stampa",
     "completed": "Completato",
     "failed": "Errore",
+}
+PRINTER_STATE_LABELS = {
+    "idle": "Pronta",
+    "printing": "In stampa",
+    "stopped": "Fermata",
+    "unknown": "Sconosciuto",
 }
 
 
@@ -119,6 +130,33 @@ def index(request: Request) -> HTMLResponse:
             "default_printer": default_printer,
             "backend_ready": bool(printer_backend),
             "backend_error": backend_error,
+        },
+    )
+
+
+@app.get("/printer-status", response_class=HTMLResponse)
+def printer_status(request: Request, printer: Optional[str] = None) -> HTMLResponse:
+    snapshot: Optional[PrinterStatusSnapshot] = None
+    error: Optional[str] = None
+
+    selected_printer = _resolve_printer_name(printer)
+    if printer_backend is None:
+        error = backend_boot_error or "Backend di stampa non disponibile."
+    elif not selected_printer:
+        error = "Nessuna stampante disponibile."
+    else:
+        try:
+            snapshot = printer_backend.get_status(selected_printer)
+        except PrintBackendError as exc:
+            error = str(exc)
+
+    return TEMPLATES.TemplateResponse(
+        request=request,
+        name="_printer_status.html",
+        context={
+            "status_snapshot": snapshot,
+            "status_error": error,
+            "printer_state_labels": PRINTER_STATE_LABELS,
         },
     )
 
@@ -341,6 +379,24 @@ def _prepare_pdf_for_print(file_path: Path, pdf_password: Optional[str]) -> Path
 
     file_path.unlink(missing_ok=True)
     return output_path
+
+
+def _resolve_printer_name(printer: Optional[str]) -> Optional[str]:
+    requested = (printer or "").strip()
+    if requested:
+        return requested
+    if not printer_backend:
+        return None
+    try:
+        default_printer = printer_backend.default_printer()
+        if default_printer:
+            return default_printer
+        printers = printer_backend.list_printers()
+        if printers:
+            return printers[0]
+    except PrintBackendError:
+        return None
+    return None
 
 
 def _as_bool(value: Optional[str]) -> bool:
