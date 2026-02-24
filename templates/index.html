@@ -73,7 +73,7 @@
 
         <label>
           <span>Stampante</span>
-          <select name="printer" {% if not backend_ready or not printers %}disabled{% endif %}>
+          <select id="printer-select" name="printer" {% if not backend_ready or not printers %}disabled{% endif %}>
             {% for p in printers %}
               <option value="{{ p }}" {% if p == default_printer %}selected{% endif %}>{{ p }}</option>
             {% endfor %}
@@ -135,6 +135,23 @@
           <div class="fill" :style="`width:${uploadProgress}%`"></div>
         </div>
         <p>Upload: <strong x-text="`${uploadProgress}%`"></strong></p>
+      </div>
+    </section>
+
+    <section class="card printer-monitor">
+      <header class="monitor-header">
+        <h2>Monitor Stampante</h2>
+        <p>Aggiornamento automatico ogni 8 secondi</p>
+      </header>
+      <div
+        id="printer-monitor-panel"
+        hx-get="/printer-status"
+        hx-trigger="load, every 8s, change from:#printer-select"
+        hx-include="#printer-select"
+        hx-target="this"
+        hx-swap="innerHTML"
+      >
+        <p class="field-note">Caricamento stato stampante...</p>
       </div>
     </section>
 

@@ -9,6 +9,7 @@ Mini sito web in Python che permette di:
   - fronte/retro (default: disattivo),
 - stampare PDF protetti da password (campo password opzionale nel form),
 - inviare il job alla stampante locale,
+- monitorare stato stampante e livelli toner in un pannello dedicato asincrono,
 - vedere feedback su avanzamento, esito ed errori.
 
 UI realizzata con HTML + AlpineJS + HTMX.
@@ -19,6 +20,7 @@ UI realizzata con HTML + AlpineJS + HTMX.
 - `pip`
 - Backend di stampa locale:
   - Linux/macOS: CUPS (`lp`, `lpstat`) installati e configurati
+    (`ipptool` consigliato per mostrare i livelli toner)
   - Windows: SumatraPDF installato (oppure variabile `SUMATRA_PDF_PATH`)
 
 ## Avvio
@@ -64,5 +66,7 @@ Il container:
 
 - I file vengono salvati temporaneamente in `uploads/` e cancellati al termine del job.
 - Lo stato del job viene aggiornato in polling HTMX ogni 2 secondi.
+- Il pannello monitor stampante viene aggiornato in polling HTMX ogni 8 secondi.
+- I livelli toner sono mostrati quando la stampante li espone via IPP/CUPS.
 - In caso di errore, il dettaglio viene mostrato direttamente nel pannello del job.
 - Con backend CUPS, se disponibile, viene letto anche l'ID di coda stampa.

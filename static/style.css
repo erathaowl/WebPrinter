@@ -166,6 +166,173 @@ fieldset {
   margin-top: 1.1rem;
 }
 
+.printer-monitor {
+  margin-top: 1.1rem;
+}
+
+.monitor-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.monitor-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.monitor-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.printer-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.printer-status-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.printer-summary {
+  margin: 0.7rem 0 0.5rem;
+  color: var(--muted);
+}
+
+.printer-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+  margin: 0.8rem 0;
+}
+
+.printer-meta dt {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.printer-meta dd {
+  margin: 0.2rem 0 0;
+  font-size: 0.94rem;
+}
+
+.mono {
+  word-break: break-all;
+  font-family: "Fira Mono", Consolas, "Courier New", monospace;
+}
+
+.printer-state-idle {
+  color: #0d6f3a;
+  background: #e7f7ed;
+}
+
+.printer-state-printing {
+  color: #0655b6;
+  background: #e7f0ff;
+}
+
+.printer-state-stopped {
+  color: #a61e2d;
+  background: #fdecee;
+}
+
+.printer-state-unknown {
+  color: #61450a;
+  background: #f8efdb;
+}
+
+.printer-reasons {
+  margin: 0.5rem 0 0.9rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: #f9f4ea;
+  color: #6d4e08;
+}
+
+.toner-title {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.toner-list {
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.toner-item {
+  border: 1px solid #e2e8f2;
+  border-radius: 10px;
+  padding: 0.5rem 0.55rem;
+  background: #fbfdff;
+}
+
+.toner-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+
+.toner-track {
+  height: 9px;
+  border-radius: 999px;
+  background: #dce5f3;
+  overflow: hidden;
+}
+
+.toner-fill {
+  height: 100%;
+  width: 0;
+  transition: width 0.4s ease;
+  background: linear-gradient(90deg, #687a96, #4f6385);
+}
+
+.toner-black {
+  background: linear-gradient(90deg, #4f5b69, #232b34);
+}
+
+.toner-cyan {
+  background: linear-gradient(90deg, #3cc0da, #1088a6);
+}
+
+.toner-magenta {
+  background: linear-gradient(90deg, #dd57af, #a2387a);
+}
+
+.toner-yellow {
+  background: linear-gradient(90deg, #f3cf53, #d7a80a);
+}
+
+.toner-generic {
+  background: linear-gradient(90deg, #7d93bb, #566f9b);
+}
+
+.printer-status-message {
+  border: 1px solid #dce4f0;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  color: var(--muted);
+}
+
+.printer-status-message.error {
+  border-color: #f2ccd3;
+  color: var(--err);
+  background: #fff5f6;
+}
+
 .job-card {
   background: var(--panel);
   border: 1px solid var(--border);
