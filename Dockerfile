@@ -17,9 +17,9 @@ RUN apt-get update \
         net-tools \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip \
-    && pip install -r /app/requirements.txt
+COPY pyproject.toml /app/pyproject.toml
+RUN pip install --upgrade pip tomli \
+    && python -c "import subprocess, sys, tomli; deps = tomli.load(open('/app/pyproject.toml', 'rb'))['project']['dependencies']; subprocess.check_call([sys.executable, '-m', 'pip', 'install', *deps])"
 
 COPY . /app
 RUN chmod +x /app/docker/entrypoint.sh

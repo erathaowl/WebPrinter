@@ -71,14 +71,22 @@
           >
         </label>
 
-        <label>
-          <span>Stampante</span>
-          <select id="printer-select" name="printer" {% if not backend_ready or not printers %}disabled{% endif %}>
-            {% for p in printers %}
-              <option value="{{ p }}" {% if p == default_printer %}selected{% endif %}>{{ p }}</option>
-            {% endfor %}
-          </select>
-        </label>
+        {% if printers|length == 1 %}
+          <label>
+            <span>Stampante</span>
+            <input type="text" value="{{ printers[0] }}" readonly>
+            <input id="printer-select" type="hidden" name="printer" value="{{ printers[0] }}">
+          </label>
+        {% else %}
+          <label>
+            <span>Stampante</span>
+            <select id="printer-select" name="printer" {% if not backend_ready or not printers %}disabled{% endif %}>
+              {% for p in printers %}
+                <option value="{{ p }}" {% if p == default_printer %}selected{% endif %}>{{ p }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        {% endif %}
 
         <fieldset>
           <legend>Colore</legend>
