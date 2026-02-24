@@ -72,11 +72,7 @@
         </label>
 
         {% if printers|length == 1 %}
-          <label>
-            <span>Stampante</span>
-            <input type="text" value="{{ printers[0] }}" readonly>
-            <input id="printer-select" type="hidden" name="printer" value="{{ printers[0] }}">
-          </label>
+          <input id="printer-select" type="hidden" name="printer" value="{{ printers[0] }}">
         {% else %}
           <label>
             <span>Stampante</span>
