@@ -1,3 +1,5 @@
+"""Printing backend abstractions and platform-specific implementations."""
+
 from __future__ import annotations
 
 import json
@@ -16,7 +18,7 @@ from reportlab.pdfgen import canvas
 
 
 class PrintBackendError(RuntimeError):
-    """Errore sollevato dal backend di stampa."""
+    """Raised when a printing backend operation fails."""
 
 
 ProgressCallback = Callable[[int, str], None]
@@ -24,6 +26,8 @@ ProgressCallback = Callable[[int, str], None]
 
 @dataclass(frozen=True)
 class PrintOptions:
+    """Carries normalized options required to submit a print job."""
+
     printer: str
     copies: int = 1
     color: bool = False
@@ -32,12 +36,15 @@ class PrintOptions:
 
 @dataclass(frozen=True)
 class TonerLevel:
+    """Represents a single toner or marker level entry."""
+
     name: str
     percent: Optional[int]
     color: Optional[str] = None
 
     @property
     def color_key(self) -> str:
+        """Return a normalized UI color key inferred from toner metadata."""
         text = f"{self.color or ''} {self.name}".lower()
         if "black" in text or "nero" in text:
             return "black"
@@ -52,6 +59,8 @@ class TonerLevel:
 
 @dataclass(frozen=True)
 class PrinterStatusSnapshot:
+    """Represents a snapshot of printer status and consumable levels."""
+
     printer: str
     state: str
     message: str
@@ -65,10 +74,14 @@ class PrinterStatusSnapshot:
 
 
 class PrinterBackend(Protocol):
+    """Defines the common interface exposed by printer backends."""
+
     def list_printers(self) -> list[str]:
+        """Return all printers currently available to the backend."""
         ...
 
     def default_printer(self) -> Optional[str]:
+        """Return the default printer name, if configured."""
         ...
 
     def print_file(
@@ -77,23 +90,29 @@ class PrinterBackend(Protocol):
         options: PrintOptions,
         progress: ProgressCallback,
     ) -> Optional[str]:
+        """Print a file and optionally return a backend-specific job identifier."""
         ...
 
     def get_status(self, printer: str) -> PrinterStatusSnapshot:
+        """Return current status details for the selected printer."""
         ...
 
 
 class CupsPrinterBackend:
+    """Printer backend implementation based on CUPS command line tools."""
+
     REQUEST_ID_PATTERN = re.compile(r"request id is ([^\s]+)")
     IPP_ATTRIBUTE_PATTERN = re.compile(r"^([A-Za-z0-9-]+)\s+\([^)]+\)\s+=\s*(.+)$")
 
     def __init__(self) -> None:
+        """Validate that required CUPS commands are available."""
         if not shutil.which("lp") or not shutil.which("lpstat"):
             raise PrintBackendError(
                 "Comandi CUPS non trovati: servono 'lp' e 'lpstat'."
             )
 
     def list_printers(self) -> list[str]:
+        """Return printers known by CUPS."""
         result = subprocess.run(
             ["lpstat", "-a"],
             check=False,
@@ -113,6 +132,7 @@ class CupsPrinterBackend:
         return sorted(set(printers))
 
     def default_printer(self) -> Optional[str]:
+        """Return the CUPS default printer, if set."""
         result = subprocess.run(
             ["lpstat", "-d"],
             check=False,
@@ -133,6 +153,7 @@ class CupsPrinterBackend:
         options: PrintOptions,
         progress: ProgressCallback,
     ) -> Optional[str]:
+        """Send a file to CUPS and emit progress updates."""
         if not file_path.exists():
             raise PrintBackendError("Il file da stampare non esiste.")
         if options.copies < 1:
@@ -175,6 +196,7 @@ class CupsPrinterBackend:
         return job_id
 
     def get_status(self, printer: str) -> PrinterStatusSnapshot:
+        """Collect printer state, queue stats, and toner information from CUPS."""
         if not printer:
             raise PrintBackendError("Nessuna stampante selezionata.")
 
@@ -247,6 +269,7 @@ class CupsPrinterBackend:
         )
 
     def _extract_job_id(self, output: str) -> Optional[str]:
+        """Extract a CUPS job identifier from `lp` command output."""
         match = self.REQUEST_ID_PATTERN.search(output or "")
         if match:
             return match.group(1)
@@ -261,6 +284,7 @@ class CupsPrinterBackend:
         job_id: str,
         progress: ProgressCallback,
     ) -> None:
+        """Wait until CUPS no longer reports the job in the local queue."""
         for attempt in range(1, 13):
             time.sleep(1)
             result = subprocess.run(
@@ -277,6 +301,7 @@ class CupsPrinterBackend:
             progress(min(90, 68 + attempt * 2), "Job ancora in coda locale.")
 
     def _map_state(self, summary: str) -> tuple[str, Optional[bool]]:
+        """Map CUPS textual status into normalized state and enabled flag."""
         text = summary.lower()
         enabled = "disabled" not in text
         if "printing" in text or "processing" in text:
@@ -288,6 +313,7 @@ class CupsPrinterBackend:
         return "unknown", enabled
 
     def _parse_device_uri(self, output: str, printer: str) -> Optional[str]:
+        """Parse `lpstat -v` output and return the printer device URI."""
         marker = f"device for {printer}:"
         for line in output.splitlines():
             line = line.strip()
@@ -302,6 +328,7 @@ class CupsPrinterBackend:
         return None
 
     def _extract_reasons(self, lines: list[str]) -> list[str]:
+        """Extract printer reason tokens from extended CUPS status lines."""
         reasons: list[str] = []
         for line in lines:
             if ":" not in line:
@@ -323,6 +350,7 @@ class CupsPrinterBackend:
         printer: str,
         device_uri: Optional[str],
     ) -> tuple[list[TonerLevel], Optional[str]]:
+        """Fetch toner levels via IPP attributes when exposed by the printer."""
         if not shutil.which("ipptool"):
             return [], "Livelli toner non disponibili (manca il comando ipptool)."
 
@@ -365,6 +393,7 @@ class CupsPrinterBackend:
         return [], "Livelli toner non disponibili."
 
     def _find_ipptool_test(self) -> Optional[Path]:
+        """Locate the standard CUPS ipptool test file on disk."""
         candidates = [
             Path("/usr/share/cups/ipptool/get-printer-attributes.test"),
             Path("/usr/local/share/cups/ipptool/get-printer-attributes.test"),
@@ -375,6 +404,7 @@ class CupsPrinterBackend:
         return None
 
     def _parse_ipptool_output(self, output: str) -> dict[str, str]:
+        """Parse ipptool output lines into an attribute dictionary."""
         attributes: dict[str, str] = {}
         for raw_line in output.splitlines():
             line = raw_line.strip()
@@ -388,6 +418,7 @@ class CupsPrinterBackend:
         return attributes
 
     def _extract_toner_levels(self, attributes: dict[str, str]) -> list[TonerLevel]:
+        """Build toner level entries from parsed IPP marker attributes."""
         names = self._split_ipp_values(attributes.get("marker-names", ""))
         levels = self._split_ipp_values(attributes.get("marker-levels", ""))
         colors = self._split_ipp_values(attributes.get("marker-colors", ""))
@@ -420,17 +451,20 @@ class CupsPrinterBackend:
         return toner_levels
 
     def _split_ipp_values(self, raw: str) -> list[str]:
+        """Split comma-separated IPP attribute values preserving simple tokens."""
         if not raw:
             return []
         return [chunk.strip().strip('"') for chunk in raw.split(",") if chunk.strip()]
 
     def _parse_int(self, raw: str) -> Optional[int]:
+        """Parse an integer value and return `None` when parsing fails."""
         try:
             return int(raw)
         except (TypeError, ValueError):
             return None
 
     def _normalize_toner_level(self, level: Optional[int]) -> Optional[int]:
+        """Normalize raw marker levels into percentages when possible."""
         if level is None or level < 0:
             return None
         if level <= 100:
@@ -441,7 +475,10 @@ class CupsPrinterBackend:
 
 
 class SumatraPrinterBackend:
+    """Printer backend implementation for Windows using SumatraPDF."""
+
     def __init__(self) -> None:
+        """Resolve the SumatraPDF executable required for printing."""
         self.executable = self._find_sumatra()
         if not self.executable:
             raise PrintBackendError(
@@ -450,6 +487,7 @@ class SumatraPrinterBackend:
             )
 
     def list_printers(self) -> list[str]:
+        """Return printers visible through Windows PowerShell APIs."""
         result = subprocess.run(
             [
                 "powershell",
@@ -467,6 +505,7 @@ class SumatraPrinterBackend:
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
     def default_printer(self) -> Optional[str]:
+        """Return the default Windows printer name, if available."""
         result = subprocess.run(
             [
                 "powershell",
@@ -491,6 +530,7 @@ class SumatraPrinterBackend:
         options: PrintOptions,
         progress: ProgressCallback,
     ) -> Optional[str]:
+        """Print a file through SumatraPDF and report progress updates."""
         if not file_path.exists():
             raise PrintBackendError("Il file da stampare non esiste.")
         if options.copies < 1:
@@ -534,6 +574,7 @@ class SumatraPrinterBackend:
         return None
 
     def get_status(self, printer: str) -> PrinterStatusSnapshot:
+        """Collect printer status information from Windows spooler APIs."""
         if not printer:
             raise PrintBackendError("Nessuna stampante selezionata.")
 
@@ -593,6 +634,7 @@ class SumatraPrinterBackend:
         )
 
     def _find_sumatra(self) -> Optional[Path]:
+        """Return the first existing SumatraPDF executable candidate path."""
         candidates = [
             os.getenv("SUMATRA_PDF_PATH"),
             r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
@@ -607,6 +649,7 @@ class SumatraPrinterBackend:
         return None
 
     def _text_to_pdf(self, text_path: Path) -> Path:
+        """Convert a plain text file into a temporary PDF for printing."""
         with text_path.open("r", encoding="utf-8", errors="replace") as source:
             lines = source.readlines()
 
@@ -641,9 +684,11 @@ class SumatraPrinterBackend:
         return output_path
 
     def _ps_escape(self, value: str) -> str:
+        """Escape single quotes for embedding values in PowerShell strings."""
         return value.replace("'", "''")
 
     def _map_windows_state(self, raw_state: str, offline: bool) -> str:
+        """Map Windows printer status into normalized application states."""
         if offline:
             return "stopped"
 
@@ -669,6 +714,7 @@ class SumatraPrinterBackend:
 
 
 def build_backend() -> tuple[Optional[PrinterBackend], Optional[str]]:
+    """Build the best available backend for the current operating system."""
     if shutil.which("lp") and shutil.which("lpstat"):
         try:
             return CupsPrinterBackend(), None

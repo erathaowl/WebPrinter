@@ -1,3 +1,5 @@
+"""FastAPI application for submitting and monitoring print jobs."""
+
 from __future__ import annotations
 
 import re
@@ -58,6 +60,8 @@ PRINTER_STATE_LABELS = {
 
 @dataclass
 class PrintJob:
+    """Represents a print job tracked by the application."""
+
     id: str
     filename: str
     stored_path: Optional[Path]
@@ -73,20 +77,26 @@ class PrintJob:
 
 
 class JobRegistry:
+    """Thread-safe in-memory storage for print jobs."""
+
     def __init__(self) -> None:
+        """Initialize the internal job map and lock."""
         self._jobs: dict[str, PrintJob] = {}
         self._lock = Lock()
 
     def create(self, job: PrintJob) -> None:
+        """Store a new job by its identifier."""
         with self._lock:
             self._jobs[job.id] = job
 
     def get(self, job_id: str) -> Optional[PrintJob]:
+        """Return a snapshot copy of a job, if available."""
         with self._lock:
             job = self._jobs.get(job_id)
             return replace(job) if job else None
 
     def update(self, job_id: str, **changes: object) -> Optional[PrintJob]:
+        """Apply field updates to a job and return the updated snapshot."""
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
@@ -106,11 +116,13 @@ printer_backend, backend_boot_error = build_backend()
 
 @app.on_event("shutdown")
 def shutdown_executor() -> None:
+    """Stop the background executor during application shutdown."""
     executor.shutdown(wait=False, cancel_futures=True)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    """Render the main page with printer availability information."""
     printers: list[str] = []
     default_printer: Optional[str] = None
     backend_error = backend_boot_error
@@ -136,6 +148,7 @@ def index(request: Request) -> HTMLResponse:
 
 @app.get("/printer-status", response_class=HTMLResponse)
 def printer_status(request: Request, printer: Optional[str] = None) -> HTMLResponse:
+    """Render the printer status panel for the selected printer."""
     snapshot: Optional[PrinterStatusSnapshot] = None
     error: Optional[str] = None
 
@@ -171,6 +184,7 @@ def create_job(
     duplex: Optional[str] = Form(None),
     pdf_password: Optional[str] = Form(None),
 ) -> HTMLResponse:
+    """Validate input, queue a print job, and return its initial status panel."""
     if printer_backend is None:
         error_job = _error_job(
             filename=file.filename or "sconosciuto",
@@ -229,6 +243,7 @@ def create_job(
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_status(request: Request, job_id: str) -> HTMLResponse:
+    """Render the latest status for a single print job."""
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job non trovato")
@@ -236,6 +251,7 @@ def job_status(request: Request, job_id: str) -> HTMLResponse:
 
 
 def process_print_job(job_id: str) -> None:
+    """Execute printing in the background and update job progress."""
     snapshot = jobs.get(job_id)
     if not snapshot:
         return
@@ -252,6 +268,7 @@ def process_print_job(job_id: str) -> None:
     jobs.update(job_id, status="preparing", progress=20, message="Preparazione del file.")
 
     def progress(percent: int, message: str) -> None:
+        """Persist progressive feedback while the backend is printing."""
         jobs.update(
             job_id,
             status="printing",
@@ -300,6 +317,7 @@ def process_print_job(job_id: str) -> None:
 
 
 def _render_job(request: Request, job: PrintJob) -> HTMLResponse:
+    """Render the reusable job status fragment."""
     return TEMPLATES.TemplateResponse(
         request=request,
         name="_job_status.html",
@@ -312,6 +330,7 @@ def _render_job(request: Request, job: PrintJob) -> HTMLResponse:
 
 
 def _validate_upload(file: UploadFile) -> str:
+    """Validate file name and extension and return a safe base filename."""
     filename = (file.filename or "").strip()
     if not filename:
         raise ValueError("Seleziona un file.")
@@ -324,6 +343,7 @@ def _validate_upload(file: UploadFile) -> str:
 
 
 def _validate_color_mode(color_mode: str) -> str:
+    """Validate and normalize the selected color mode."""
     mode = (color_mode or "").lower()
     if mode not in {"bw", "color"}:
         raise ValueError("Modalita colore non valida.")
@@ -331,12 +351,14 @@ def _validate_color_mode(color_mode: str) -> str:
 
 
 def _validate_copies(copies: int) -> int:
+    """Ensure the number of copies is within accepted bounds."""
     if copies < 1 or copies > 99:
         raise ValueError("Il numero di copie deve essere tra 1 e 99.")
     return copies
 
 
 def _store_uploaded_file(file: UploadFile, original_name: str, job_id: str) -> Path:
+    """Store the uploaded file on disk using a sanitized unique name."""
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", original_name)
     target_path = UPLOAD_DIR / f"{job_id}_{safe_name}"
     with target_path.open("wb") as destination:
@@ -345,6 +367,7 @@ def _store_uploaded_file(file: UploadFile, original_name: str, job_id: str) -> P
 
 
 def _prepare_pdf_for_print(file_path: Path, pdf_password: Optional[str]) -> Path:
+    """Decrypt encrypted PDFs when needed and return the printable path."""
     if file_path.suffix.lower() != ".pdf":
         return file_path
 
@@ -382,6 +405,7 @@ def _prepare_pdf_for_print(file_path: Path, pdf_password: Optional[str]) -> Path
 
 
 def _resolve_printer_name(printer: Optional[str]) -> Optional[str]:
+    """Resolve explicit, default, or first available printer name."""
     requested = (printer or "").strip()
     if requested:
         return requested
@@ -400,12 +424,14 @@ def _resolve_printer_name(printer: Optional[str]) -> Optional[str]:
 
 
 def _as_bool(value: Optional[str]) -> bool:
+    """Parse common HTML form truthy values into a boolean."""
     if value is None:
         return False
     return value.lower() in {"1", "true", "yes", "on"}
 
 
 def _error_job(filename: str, message: str, error: Optional[str]) -> PrintJob:
+    """Build a failed job payload used for immediate UI feedback."""
     return PrintJob(
         id=uuid.uuid4().hex,
         filename=Path(filename).name or "sconosciuto",
