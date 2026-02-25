@@ -330,14 +330,16 @@ class CupsPrinterBackend:
         if test_path is None:
             return [], "Livelli toner non disponibili (test ipptool non trovato)."
 
-        uris = [f"ipp://localhost/printers/{printer}"]
+        uris: list[str] = []
         if device_uri and device_uri.lower().startswith(("ipp://", "ipps://")):
             uris.append(device_uri)
+        uris.append(f"ipp://localhost/printers/{printer}")
 
         last_error: Optional[str] = None
+        missing_toner_attributes = False
         for uri in dict.fromkeys(uris):
             result = subprocess.run(
-                ["ipptool", "-c", "-t", uri, str(test_path)],
+                ["ipptool", "-v", "-t", uri, str(test_path)],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -346,10 +348,16 @@ class CupsPrinterBackend:
                 last_error = result.stderr.strip() or result.stdout.strip() or "errore"
                 continue
 
-            attributes = self._parse_ipptool_output(result.stdout)
+            output = "\n".join(
+                chunk for chunk in (result.stdout, result.stderr) if chunk.strip()
+            )
+            attributes = self._parse_ipptool_output(output)
             toner_levels = self._extract_toner_levels(attributes)
             if toner_levels:
                 return toner_levels, None
+            missing_toner_attributes = True
+
+        if missing_toner_attributes:
             return [], "La stampante non espone i livelli toner via IPP."
 
         if last_error:
