@@ -189,6 +189,73 @@ fieldset {
   font-size: 0.82rem;
 }
 
+.monitor-refresh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.refresh-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+}
+
+.refresh-toggle:hover {
+  border-color: #bfcde3;
+}
+
+.refresh-toggle:focus-visible {
+  outline: 2px solid #7ab0ff;
+  outline-offset: 1px;
+}
+
+.refresh-icon {
+  position: relative;
+  display: inline-flex;
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.refresh-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.refresh-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.refresh-toggle.is-disabled {
+  color: #7689a5;
+}
+
+.refresh-toggle.is-disabled .refresh-icon::after {
+  content: "";
+  position: absolute;
+  left: -0.08rem;
+  right: -0.08rem;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(-28deg);
+}
+
 .printer-status-header {
   display: flex;
   align-items: center;

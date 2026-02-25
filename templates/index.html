@@ -9,7 +9,42 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="page" x-data="{sending:false, uploadProgress:0}">
+  <main
+    class="page"
+    x-data="{
+      sending: false,
+      uploadProgress: 0,
+      autoRefreshEnabled: true,
+      lastUpdateTimestamp: '--',
+      autoRefreshTimerId: null,
+      setupPrinterMonitor() {
+        const panel = this.$refs.printerMonitorPanel;
+        if (!panel || !window.htmx) return;
+
+        document.body.addEventListener('htmx:afterSwap', (event) => {
+          if (event.target === panel) {
+            this.lastUpdateTimestamp = this.formatLastUpdate();
+          }
+        });
+
+        this.autoRefreshTimerId = window.setInterval(() => {
+          if (this.autoRefreshEnabled) {
+            window.htmx.trigger(panel, 'monitor-refresh');
+          }
+        }, 8000);
+      },
+      toggleAutoRefresh() {
+        this.autoRefreshEnabled = !this.autoRefreshEnabled;
+        if (this.autoRefreshEnabled && this.$refs.printerMonitorPanel && window.htmx) {
+          window.htmx.trigger(this.$refs.printerMonitorPanel, 'monitor-refresh');
+        }
+      },
+      formatLastUpdate() {
+        return new Date().toLocaleString('it-IT');
+      },
+    }"
+    x-init="setupPrinterMonitor()"
+  >
     <header class="hero">
       <p class="kicker">LOCAL PRINTING</p>
       <h1>WebPrinter</h1>
@@ -108,6 +143,11 @@
           >
         </label>
 
+        <label class="inline-option toggle">
+          <input type="checkbox" name="duplex" value="true" {% if not backend_ready %}disabled{% endif %}>
+          <span>Fronte/retro</span>
+        </label>
+
         <label>
           <span>Password PDF (opzionale)</span>
           <input
@@ -118,11 +158,6 @@
             {% if not backend_ready %}disabled{% endif %}
           >
           <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
-        </label>
-
-        <label class="inline-option toggle">
-          <input type="checkbox" name="duplex" value="true" {% if not backend_ready %}disabled{% endif %}>
-          <span>Fronte/retro</span>
         </label>
 
         <button
@@ -145,12 +180,31 @@
     <section class="card printer-monitor">
       <header class="monitor-header">
         <h2>Monitor Stampante</h2>
-        <p>Aggiornamento automatico ogni 8 secondi</p>
+        <div class="monitor-refresh-status">
+          <button
+            type="button"
+            class="refresh-toggle"
+            :class="{ 'is-disabled': !autoRefreshEnabled }"
+            x-on:click="toggleAutoRefresh()"
+            :title="autoRefreshEnabled ? 'Disattiva refresh automatico' : 'Attiva refresh automatico'"
+            :aria-label="autoRefreshEnabled ? 'Disattiva refresh automatico' : 'Attiva refresh automatico'"
+            :aria-pressed="(!autoRefreshEnabled).toString()"
+          >
+            <span class="refresh-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img" focusable="false">
+                <path d="M20 12a8 8 0 1 1-2.34-5.66"/>
+                <path d="M20 4v6h-6"/>
+              </svg>
+            </span>
+          </button>
+          <span x-text="lastUpdateTimestamp"></span>
+        </div>
       </header>
       <div
         id="printer-monitor-panel"
+        x-ref="printerMonitorPanel"
         hx-get="/printer-status"
-        hx-trigger="load, every 8s, change from:#printer-select"
+        hx-trigger="load, change from:#printer-select, monitor-refresh"
         hx-include="#printer-select"
         hx-target="this"
         hx-swap="innerHTML"
