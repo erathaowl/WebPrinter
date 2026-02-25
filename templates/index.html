@@ -12,11 +12,25 @@
   <main
     class="page"
     x-data="{
+      backendReady: {{ 'true' if backend_ready else 'false' }},
       sending: false,
       uploadProgress: 0,
+      showPdfPassword: false,
       autoRefreshEnabled: true,
       lastUpdateTimestamp: '--',
       autoRefreshTimerId: null,
+      handleFileSelection(event) {
+        const input = event && event.target ? event.target : null;
+        const file = input && input.files && input.files.length ? input.files[0] : null;
+        const fileName = file && file.name ? file.name.toLowerCase() : '';
+        const mimeType = file && file.type ? file.type.toLowerCase() : '';
+        this.showPdfPassword = Boolean(
+          file && (fileName.endsWith('.pdf') || mimeType === 'application/pdf')
+        );
+        if (!this.showPdfPassword && this.$refs.pdfPasswordInput) {
+          this.$refs.pdfPasswordInput.value = '';
+        }
+      },
       handleFormSubmit() {
         this.sending = true;
         this.uploadProgress = 0;
@@ -65,7 +79,7 @@
           if (this.autoRefreshEnabled) {
             window.htmx.trigger(panel, 'monitor-refresh');
           }
-        }, 8000);
+        }, 30000);
       },
       toggleAutoRefresh() {
         this.autoRefreshEnabled = !this.autoRefreshEnabled;
@@ -117,8 +131,22 @@
             name="file"
             accept=".pdf,.txt,image/*"
             required
+            x-on:change="handleFileSelection($event)"
             {% if not backend_ready %}disabled{% endif %}
           >
+        </label>
+
+        <label x-show="showPdfPassword" x-cloak>
+          <span>Password PDF (opzionale)</span>
+          <input
+            x-ref="pdfPasswordInput"
+            type="password"
+            name="pdf_password"
+            autocomplete="off"
+            placeholder="Solo per PDF protetti"
+            x-bind:disabled="!backendReady || !showPdfPassword"
+          >
+          <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
         </label>
 
         {% if printers|length == 1 %}
@@ -161,18 +189,6 @@
         <label class="inline-option toggle">
           <input type="checkbox" name="duplex" value="true" {% if not backend_ready %}disabled{% endif %}>
           <span>Fronte/retro</span>
-        </label>
-
-        <label>
-          <span>Password PDF (opzionale)</span>
-          <input
-            type="password"
-            name="pdf_password"
-            autocomplete="off"
-            placeholder="Solo per PDF protetti"
-            {% if not backend_ready %}disabled{% endif %}
-          >
-          <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
         </label>
 
         <button
