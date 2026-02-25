@@ -17,6 +17,40 @@
       autoRefreshEnabled: true,
       lastUpdateTimestamp: '--',
       autoRefreshTimerId: null,
+      handleFormSubmit() {
+        this.sending = true;
+        this.uploadProgress = 0;
+      },
+      handleBeforeRequest(event) {
+        const detail = event && event.detail ? event.detail : null;
+        const sourceElement = detail && detail.elt ? detail.elt : null;
+        if (sourceElement && sourceElement.id === 'print-form') {
+          this.sending = true;
+          this.uploadProgress = 0;
+        }
+      },
+      handleAfterRequest(event) {
+        const detail = event && event.detail ? event.detail : null;
+        const sourceElement = detail && detail.elt ? detail.elt : null;
+        if (sourceElement && sourceElement.id === 'print-form') {
+          this.sending = false;
+          if (this.uploadProgress < 100) this.uploadProgress = 100;
+          setTimeout(() => {
+            this.uploadProgress = 0;
+          }, 800);
+        }
+      },
+      handleUploadProgress(event) {
+        const detail = event && event.detail ? event.detail : null;
+        const sourceElement = detail && detail.elt ? detail.elt : null;
+        if (!sourceElement || sourceElement.id !== 'print-form') return;
+
+        const total = Number(detail.total || 0);
+        const loaded = Number(detail.loaded || 0);
+        if (total > 0) {
+          this.uploadProgress = Math.round((loaded / total) * 100);
+        }
+      },
       setupPrinterMonitor() {
         const panel = this.$refs.printerMonitorPanel;
         if (!panel || !window.htmx) return;
@@ -71,29 +105,10 @@
         hx-target="#job-area"
         hx-swap="innerHTML"
         hx-encoding="multipart/form-data"
-        x-on:submit="sending=true; uploadProgress=0"
-        x-on:htmx:before-request.window="
-          if ($event.detail.elt && $event.detail.elt.id === 'print-form') {
-            sending = true;
-            uploadProgress = 0;
-          }
-        "
-        x-on:htmx:after-request.window="
-          if ($event.detail.elt && $event.detail.elt.id === 'print-form') {
-            sending = false;
-            if (uploadProgress < 100) uploadProgress = 100;
-            setTimeout(() => uploadProgress = 0, 800);
-          }
-        "
-        x-on:htmx:xhr:progress.window="
-          if (
-            $event.detail.elt &&
-            $event.detail.elt.id === 'print-form' &&
-            $event.detail.total > 0
-          ) {
-            uploadProgress = Math.round(($event.detail.loaded / $event.detail.total) * 100);
-          }
-        "
+        x-on:submit="handleFormSubmit()"
+        x-on:htmx:before-request.window="handleBeforeRequest($event)"
+        x-on:htmx:after-request.window="handleAfterRequest($event)"
+        x-on:htmx:xhr:progress.window="handleUploadProgress($event)"
       >
         <label>
           <span>File</span>
@@ -191,13 +206,18 @@
             :aria-pressed="(!autoRefreshEnabled).toString()"
           >
             <span class="refresh-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img" focusable="false">
-                <path d="M20 12a8 8 0 1 1-2.34-5.66"/>
-                <path d="M20 4v6h-6"/>
+              <svg x-show="autoRefreshEnabled" viewBox="0 0 24 24" role="img" focusable="false">
+                <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                <path d="M20 4v6h-6"></path>
+              </svg>
+              <svg x-show="!autoRefreshEnabled" x-cloak viewBox="0 0 24 24" role="img" focusable="false">
+                <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                <path d="M20 4v6h-6"></path>
+                <path d="M4 4l16 16"></path>
               </svg>
             </span>
           </button>
-          <span x-text="lastUpdateTimestamp"></span>
+          <span class="refresh-timestamp" x-text="lastUpdateTimestamp"></span>
         </div>
       </header>
       <div
