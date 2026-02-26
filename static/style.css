@@ -127,6 +127,10 @@ fieldset {
   background: linear-gradient(135deg, #cf3343, #a61e2d);
 }
 
+.btn-secondary {
+  background: linear-gradient(135deg, #6280b1, #3f5f93);
+}
+
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -162,6 +166,14 @@ fieldset {
   justify-content: space-between;
   gap: 0.8rem;
   margin-bottom: 0.6rem;
+}
+
+.uploaded-file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .uploaded-file-name {

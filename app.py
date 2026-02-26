@@ -347,6 +347,8 @@ async def upload_chunk(
         final_path = UPLOAD_DIR / f"{normalized_upload_id}_{safe_name}"
         _cleanup_file_paths(final_path)
         entry.temp_path.replace(final_path)
+        file_type = _preview_kind(entry.filename)
+        pdf_requires_password = _pdf_requires_password(final_path) if file_type == "pdf" else False
         uploads.update(
             normalized_upload_id,
             next_chunk_index=chunk_index + 1,
@@ -360,7 +362,8 @@ async def upload_chunk(
                 "upload_id": normalized_upload_id,
                 "filename": entry.filename,
                 "preview_url": f"/uploads/{normalized_upload_id}/preview",
-                "file_type": _preview_kind(entry.filename),
+                "file_type": file_type,
+                "pdf_requires_password": pdf_requires_password,
             }
         )
 
@@ -627,6 +630,17 @@ def _preview_kind(filename: str) -> str:
     if extension == ".txt":
         return "text"
     return "other"
+
+
+def _pdf_requires_password(file_path: Path) -> bool:
+    """Return True only when the uploaded PDF is encrypted."""
+    if file_path.suffix.lower() != ".pdf":
+        return False
+    try:
+        reader = PdfReader(str(file_path))
+    except Exception:
+        return False
+    return bool(reader.is_encrypted)
 
 
 def _cleanup_file_paths(*paths: Optional[Path]) -> None:

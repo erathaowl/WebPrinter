@@ -24,6 +24,7 @@
       stagedUploadPreviewUrl: '',
       stagedUploadType: '',
       showPdfPassword: false,
+      previewExpanded: false,
       autoRefreshEnabled: true,
       lastUpdateTimestamp: '--',
       autoRefreshTimerId: null,
@@ -35,19 +36,14 @@
         this.sendingPrint = true;
       },
       handleFileSelection(event) {
-        const input = event && event.target ? event.target : null;
-        const file = input && input.files && input.files.length ? input.files[0] : null;
-        const fileName = file && file.name ? file.name.toLowerCase() : '';
-        const mimeType = file && file.type ? file.type.toLowerCase() : '';
         this.uploadError = '';
         this.uploadSuccessMessage = '';
-        if (this.stagedUploadId) {
-          this.showPdfPassword = this.stagedUploadType === 'pdf';
-          return;
+        if (!this.stagedUploadId) {
+          this.showPdfPassword = false;
+          if (this.$refs.pdfPasswordInput) {
+            this.$refs.pdfPasswordInput.value = '';
+          }
         }
-        this.showPdfPassword = Boolean(
-          file && (fileName.endsWith('.pdf') || mimeType === 'application/pdf')
-        );
       },
       async uploadSelectedFile() {
         if (!this.backendReady || this.uploading) return;
@@ -105,8 +101,9 @@
               this.stagedUploadName = data.filename || file.name;
               this.stagedUploadPreviewUrl = data.preview_url || '';
               this.stagedUploadType = data.file_type || '';
-              this.showPdfPassword = this.stagedUploadType === 'pdf';
-              if (!this.showPdfPassword && this.$refs.pdfPasswordInput) {
+              this.showPdfPassword = Boolean(data.pdf_requires_password);
+              this.previewExpanded = false;
+              if (this.$refs.pdfPasswordInput) {
                 this.$refs.pdfPasswordInput.value = '';
               }
               this.uploadSuccessMessage = 'File caricato sul server.';
@@ -146,6 +143,7 @@
           this.uploadProgress = 0;
           this.uploadSuccessMessage = '';
           this.showPdfPassword = false;
+          this.previewExpanded = false;
           if (this.$refs.pdfPasswordInput) {
             this.$refs.pdfPasswordInput.value = '';
           }
@@ -164,6 +162,12 @@
         if (fileSize > 50 * 1024 * 1024) return 2 * 1024 * 1024;
         if (fileSize > 5 * 1024 * 1024) return 1024 * 1024;
         return 512 * 1024;
+      },
+      hasStagedPreview() {
+        return this.stagedUploadType === 'image' || this.stagedUploadType === 'pdf' || this.stagedUploadType === 'text';
+      },
+      togglePreview() {
+        this.previewExpanded = !this.previewExpanded;
       },
       handleBeforePrintRequest(event) {
         const detail = event && event.detail ? event.detail : null;
@@ -262,21 +266,32 @@
         <div class="uploaded-file-card" x-show="stagedUploadId" x-cloak>
           <div class="uploaded-file-header">
             <p class="uploaded-file-name" x-text="stagedUploadName"></p>
-            <button
-              type="button"
-              class="btn btn-danger"
-              x-on:click="deleteUploadedFile()"
-              :disabled="uploading || sendingPrint"
-            >
-              Elimina file
-            </button>
+            <div class="uploaded-file-actions">
+              <button
+                type="button"
+                class="btn btn-secondary"
+                x-show="hasStagedPreview()"
+                x-cloak
+                x-on:click="togglePreview()"
+                :disabled="uploading || sendingPrint"
+                x-text="previewExpanded ? 'Nascondi anteprima' : 'Mostra anteprima'"
+              ></button>
+              <button
+                type="button"
+                class="btn btn-danger"
+                x-on:click="deleteUploadedFile()"
+                :disabled="uploading || sendingPrint"
+              >
+                Elimina file
+              </button>
+            </div>
           </div>
 
-          <div class="preview-box" x-show="stagedUploadType === 'image'" x-cloak>
+          <div class="preview-box" x-show="previewExpanded && stagedUploadType === 'image'" x-cloak>
             <img :src="stagedUploadPreviewUrl" alt="Anteprima file caricato" class="preview-image">
           </div>
 
-          <div class="preview-box" x-show="stagedUploadType === 'pdf' || stagedUploadType === 'text'" x-cloak>
+          <div class="preview-box" x-show="previewExpanded && (stagedUploadType === 'pdf' || stagedUploadType === 'text')" x-cloak>
             <iframe :src="stagedUploadPreviewUrl" class="preview-frame" title="Anteprima file caricato"></iframe>
           </div>
         </div>
@@ -295,14 +310,15 @@
         <input type="hidden" name="uploaded_file_id" :value="stagedUploadId">
 
         <label x-show="showPdfPassword" x-cloak>
-          <span>Password PDF (opzionale)</span>
+          <span>Password PDF (obbligatoria)</span>
           <input
             x-ref="pdfPasswordInput"
             type="password"
             name="pdf_password"
             autocomplete="off"
-            placeholder="Solo per PDF protetti"
+            placeholder="Inserisci la password del PDF protetto"
             x-bind:disabled="!backendReady || !showPdfPassword || !stagedUploadId"
+            x-bind:required="showPdfPassword"
           >
           <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
         </label>
