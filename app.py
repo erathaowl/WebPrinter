@@ -399,7 +399,7 @@ def preview_uploaded_file(upload_id: str) -> FileResponse:
     return FileResponse(
         path=entry.stored_path,
         media_type=media_type,
-        filename=entry.filename,
+        content_disposition_type="inline",
     )
 
 

@@ -98,6 +98,9 @@
             this.uploadProgress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
 
             if (data.completed) {
+              if (this.$refs.fileInput) {
+                this.$refs.fileInput.blur();
+              }
               this.stagedUploadId = data.upload_id || uploadId;
               this.stagedUploadName = data.filename || file.name;
               this.stagedUploadPreviewUrl = data.preview_url || '';
@@ -225,23 +228,22 @@
 
     <section class="card">
       <div class="form-grid upload-block">
-        <label>
+        <label x-show="!stagedUploadId">
           <span>File</span>
           <input
             x-ref="fileInput"
             type="file"
             accept=".pdf,.txt,image/*"
-            required
             x-on:change="handleFileSelection($event)"
-            :disabled="!backendReady || uploading || sendingPrint"
+            :disabled="uploading || sendingPrint || stagedUploadId !== ''"
           >
         </label>
 
         <button
           type="button"
           class="btn"
-          x-on:click="uploadSelectedFile()"
-          :disabled="!backendReady || uploading || sendingPrint"
+          x-on:click.prevent.stop="uploadSelectedFile()"
+          :disabled="uploading || sendingPrint || stagedUploadId !== ''"
         >
           <span x-show="!uploading">Carica file sul server</span>
           <span x-show="uploading" x-cloak>Caricamento...</span>
