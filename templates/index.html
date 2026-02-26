@@ -25,6 +25,7 @@
       stagedUploadType: '',
       showPdfPassword: false,
       previewExpanded: false,
+      previewHeight: 280,
       autoRefreshEnabled: true,
       lastUpdateTimestamp: '--',
       autoRefreshTimerId: null,
@@ -103,6 +104,7 @@
               this.stagedUploadType = data.file_type || '';
               this.showPdfPassword = Boolean(data.pdf_requires_password);
               this.previewExpanded = false;
+              this.previewHeight = 280;
               if (this.$refs.pdfPasswordInput) {
                 this.$refs.pdfPasswordInput.value = '';
               }
@@ -144,6 +146,7 @@
           this.uploadSuccessMessage = '';
           this.showPdfPassword = false;
           this.previewExpanded = false;
+          this.previewHeight = 280;
           if (this.$refs.pdfPasswordInput) {
             this.$refs.pdfPasswordInput.value = '';
           }
@@ -168,6 +171,32 @@
       },
       togglePreview() {
         this.previewExpanded = !this.previewExpanded;
+      },
+      startPreviewResize(event) {
+        if (!this.previewExpanded) return;
+        if (event.button !== undefined && event.button !== 0) return;
+        event.preventDefault();
+
+        const startY = event.clientY;
+        const startHeight = this.previewHeight;
+        const minHeight = 180;
+        const maxHeight = Math.max(320, Math.floor(window.innerHeight * 0.8));
+
+        const onPointerMove = (moveEvent) => {
+          const delta = moveEvent.clientY - startY;
+          const nextHeight = startHeight + delta;
+          this.previewHeight = Math.max(minHeight, Math.min(maxHeight, nextHeight));
+        };
+
+        const onPointerUp = () => {
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+          window.removeEventListener('pointercancel', onPointerUp);
+        };
+
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
       },
       handleBeforePrintRequest(event) {
         const detail = event && event.detail ? event.detail : null;
@@ -287,12 +316,35 @@
             </div>
           </div>
 
-          <div class="preview-box" x-show="previewExpanded && stagedUploadType === 'image'" x-cloak>
-            <img :src="stagedUploadPreviewUrl" alt="Anteprima file caricato" class="preview-image">
-          </div>
-
-          <div class="preview-box" x-show="previewExpanded && (stagedUploadType === 'pdf' || stagedUploadType === 'text')" x-cloak>
-            <iframe :src="stagedUploadPreviewUrl" class="preview-frame" title="Anteprima file caricato"></iframe>
+          <div
+            class="preview-box"
+            x-show="previewExpanded && hasStagedPreview()"
+            x-cloak
+            :style="`height:${previewHeight}px`"
+          >
+            <div class="preview-content">
+              <img
+                x-show="stagedUploadType === 'image'"
+                x-cloak
+                :src="stagedUploadPreviewUrl"
+                alt="Anteprima file caricato"
+                class="preview-image"
+              >
+              <iframe
+                x-show="stagedUploadType === 'pdf' || stagedUploadType === 'text'"
+                x-cloak
+                :src="stagedUploadPreviewUrl"
+                class="preview-frame"
+                title="Anteprima file caricato"
+              ></iframe>
+            </div>
+            <button
+              type="button"
+              class="preview-resizer"
+              x-on:pointerdown="startPreviewResize($event)"
+              aria-label="Ridimensiona anteprima"
+              :disabled="uploading || sendingPrint"
+            ></button>
           </div>
         </div>
       </div>

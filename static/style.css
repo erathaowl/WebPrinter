@@ -185,12 +185,19 @@ fieldset {
 .preview-box {
   border: 1px solid #dbe4f2;
   border-radius: 10px;
-  overflow: auto;
+  overflow: hidden;
   background: #fff;
+  display: flex;
+  flex-direction: column;
   height: 280px;
   min-height: 180px;
   max-height: 75vh;
-  resize: vertical;
+}
+
+.preview-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .preview-image {
@@ -206,6 +213,30 @@ fieldset {
   width: 100%;
   height: 100%;
   border: none;
+}
+
+.preview-resizer {
+  display: block;
+  width: 100%;
+  height: 14px;
+  border: none;
+  border-top: 1px solid #dbe4f2;
+  background:
+    linear-gradient(180deg, #f5f8fe, #ebf1fb),
+    repeating-linear-gradient(90deg, transparent 0 6px, rgba(85, 112, 152, 0.35) 6px 8px);
+  background-blend-mode: normal;
+  cursor: ns-resize;
+  padding: 0;
+}
+
+.preview-resizer:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.preview-resizer:focus-visible {
+  outline: 2px solid #7ab0ff;
+  outline-offset: -1px;
 }
 
 .track {
