@@ -13,56 +13,168 @@
     class="page"
     x-data="{
       backendReady: {{ 'true' if backend_ready else 'false' }},
-      sending: false,
+      sendingPrint: false,
+      uploading: false,
       uploadProgress: 0,
+      uploadError: '',
+      uploadSuccessMessage: '',
+      activeUploadId: '',
+      stagedUploadId: '',
+      stagedUploadName: '',
+      stagedUploadPreviewUrl: '',
+      stagedUploadType: '',
       showPdfPassword: false,
       autoRefreshEnabled: true,
       lastUpdateTimestamp: '--',
       autoRefreshTimerId: null,
+      handlePrintSubmit(event) {
+        if (!this.stagedUploadId || this.uploading || this.sendingPrint) {
+          event.preventDefault();
+          return;
+        }
+        this.sendingPrint = true;
+      },
       handleFileSelection(event) {
         const input = event && event.target ? event.target : null;
         const file = input && input.files && input.files.length ? input.files[0] : null;
         const fileName = file && file.name ? file.name.toLowerCase() : '';
         const mimeType = file && file.type ? file.type.toLowerCase() : '';
+        this.uploadError = '';
+        this.uploadSuccessMessage = '';
+        if (this.stagedUploadId) {
+          this.showPdfPassword = this.stagedUploadType === 'pdf';
+          return;
+        }
         this.showPdfPassword = Boolean(
           file && (fileName.endsWith('.pdf') || mimeType === 'application/pdf')
         );
-        if (!this.showPdfPassword && this.$refs.pdfPasswordInput) {
-          this.$refs.pdfPasswordInput.value = '';
+      },
+      async uploadSelectedFile() {
+        if (!this.backendReady || this.uploading) return;
+        const fileInput = this.$refs.fileInput;
+        const file = fileInput && fileInput.files && fileInput.files.length ? fileInput.files[0] : null;
+        if (!file) {
+          this.uploadError = 'Seleziona un file prima del caricamento.';
+          return;
         }
-      },
-      handleFormSubmit() {
-        this.sending = true;
-        this.uploadProgress = 0;
-      },
-      handleBeforeRequest(event) {
-        const detail = event && event.detail ? event.detail : null;
-        const sourceElement = detail && detail.elt ? detail.elt : null;
-        if (sourceElement && sourceElement.id === 'print-form') {
-          this.sending = true;
-          this.uploadProgress = 0;
-        }
-      },
-      handleAfterRequest(event) {
-        const detail = event && event.detail ? event.detail : null;
-        const sourceElement = detail && detail.elt ? detail.elt : null;
-        if (sourceElement && sourceElement.id === 'print-form') {
-          this.sending = false;
-          if (this.uploadProgress < 100) this.uploadProgress = 100;
-          setTimeout(() => {
-            this.uploadProgress = 0;
-          }, 800);
-        }
-      },
-      handleUploadProgress(event) {
-        const detail = event && event.detail ? event.detail : null;
-        const sourceElement = detail && detail.elt ? detail.elt : null;
-        if (!sourceElement || sourceElement.id !== 'print-form') return;
 
-        const total = Number(detail.total || 0);
-        const loaded = Number(detail.loaded || 0);
-        if (total > 0) {
-          this.uploadProgress = Math.round((loaded / total) * 100);
+        if (this.stagedUploadId) {
+          await this.deleteUploadedFile(false);
+        }
+
+        this.uploading = true;
+        this.uploadProgress = 0;
+        this.uploadError = '';
+        this.uploadSuccessMessage = '';
+
+        const uploadId = this.generateUploadId();
+        this.activeUploadId = uploadId;
+        const chunkSize = this.getChunkSize(file.size);
+        const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
+
+        try {
+          for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            const payload = new FormData();
+            payload.append('upload_id', uploadId);
+            payload.append('chunk_index', String(chunkIndex));
+            payload.append('total_chunks', String(totalChunks));
+            payload.append('original_name', file.name);
+            payload.append('mime_type', file.type || 'application/octet-stream');
+            payload.append('chunk', file.slice(start, end), file.name);
+
+            const response = await fetch('/uploads/chunk', {
+              method: 'POST',
+              body: payload,
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+              const detail = data && data.detail ? data.detail : 'Errore durante il caricamento.';
+              throw new Error(detail);
+            }
+
+            this.uploadProgress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+
+            if (data.completed) {
+              this.stagedUploadId = data.upload_id || uploadId;
+              this.stagedUploadName = data.filename || file.name;
+              this.stagedUploadPreviewUrl = data.preview_url || '';
+              this.stagedUploadType = data.file_type || '';
+              this.showPdfPassword = this.stagedUploadType === 'pdf';
+              if (!this.showPdfPassword && this.$refs.pdfPasswordInput) {
+                this.$refs.pdfPasswordInput.value = '';
+              }
+              this.uploadSuccessMessage = 'File caricato sul server.';
+            }
+          }
+        } catch (error) {
+          this.uploadError = error && error.message ? error.message : 'Upload non riuscito.';
+          if (this.activeUploadId) {
+            try {
+              await fetch(`/uploads/${this.activeUploadId}`, { method: 'DELETE' });
+            } catch (_) {
+            }
+          }
+          await this.deleteUploadedFile(false);
+        } finally {
+          this.activeUploadId = '';
+          this.uploading = false;
+          if (!this.stagedUploadId) {
+            this.uploadProgress = 0;
+          }
+        }
+      },
+      async deleteUploadedFile(clearFileInput = true) {
+        const currentUploadId = this.stagedUploadId || this.activeUploadId;
+        if (!currentUploadId) {
+          if (clearFileInput && this.$refs.fileInput) this.$refs.fileInput.value = '';
+          return;
+        }
+        try {
+          await fetch(`/uploads/${currentUploadId}`, { method: 'DELETE' });
+        } catch (_) {
+        } finally {
+          this.stagedUploadId = '';
+          this.stagedUploadName = '';
+          this.stagedUploadPreviewUrl = '';
+          this.stagedUploadType = '';
+          this.uploadProgress = 0;
+          this.uploadSuccessMessage = '';
+          this.showPdfPassword = false;
+          if (this.$refs.pdfPasswordInput) {
+            this.$refs.pdfPasswordInput.value = '';
+          }
+          if (clearFileInput && this.$refs.fileInput) {
+            this.$refs.fileInput.value = '';
+          }
+        }
+      },
+      generateUploadId() {
+        if (window.crypto && window.crypto.randomUUID) {
+          return window.crypto.randomUUID().replace(/-/g, '');
+        }
+        return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      },
+      getChunkSize(fileSize) {
+        if (fileSize > 50 * 1024 * 1024) return 2 * 1024 * 1024;
+        if (fileSize > 5 * 1024 * 1024) return 1024 * 1024;
+        return 512 * 1024;
+      },
+      handleBeforePrintRequest(event) {
+        const detail = event && event.detail ? event.detail : null;
+        const sourceElement = detail && detail.elt ? detail.elt : null;
+        if (sourceElement && sourceElement.id === 'print-form') {
+          this.sendingPrint = true;
+        }
+      },
+      handleAfterPrintRequest(event) {
+        const detail = event && event.detail ? event.detail : null;
+        const sourceElement = detail && detail.elt ? detail.elt : null;
+        if (sourceElement && sourceElement.id === 'print-form') {
+          this.sendingPrint = false;
+          this.deleteUploadedFile();
         }
       },
       setupPrinterMonitor() {
@@ -112,29 +224,73 @@
     {% endif %}
 
     <section class="card">
-      <form
-        id="print-form"
-        class="form-grid"
-        hx-post="/jobs"
-        hx-target="#job-area"
-        hx-swap="innerHTML"
-        hx-encoding="multipart/form-data"
-        x-on:submit="handleFormSubmit()"
-        x-on:htmx:before-request.window="handleBeforeRequest($event)"
-        x-on:htmx:after-request.window="handleAfterRequest($event)"
-        x-on:htmx:xhr:progress.window="handleUploadProgress($event)"
-      >
+      <div class="form-grid upload-block">
         <label>
           <span>File</span>
           <input
+            x-ref="fileInput"
             type="file"
-            name="file"
             accept=".pdf,.txt,image/*"
             required
             x-on:change="handleFileSelection($event)"
-            {% if not backend_ready %}disabled{% endif %}
+            :disabled="!backendReady || uploading || sendingPrint"
           >
         </label>
+
+        <button
+          type="button"
+          class="btn"
+          x-on:click="uploadSelectedFile()"
+          :disabled="!backendReady || uploading || sendingPrint"
+        >
+          <span x-show="!uploading">Carica file sul server</span>
+          <span x-show="uploading" x-cloak>Caricamento...</span>
+        </button>
+
+        <div class="upload-meter" x-show="uploading || uploadProgress > 0" x-cloak>
+          <div class="track">
+            <div class="fill" :style="`width:${uploadProgress}%`"></div>
+          </div>
+          <p>Upload: <strong x-text="`${uploadProgress}%`"></strong></p>
+        </div>
+
+        <p class="field-note" x-show="uploadSuccessMessage" x-text="uploadSuccessMessage"></p>
+        <p class="field-note error-text" x-show="uploadError" x-text="uploadError"></p>
+
+        <div class="uploaded-file-card" x-show="stagedUploadId" x-cloak>
+          <div class="uploaded-file-header">
+            <p class="uploaded-file-name" x-text="stagedUploadName"></p>
+            <button
+              type="button"
+              class="btn btn-danger"
+              x-on:click="deleteUploadedFile()"
+              :disabled="uploading || sendingPrint"
+            >
+              Elimina file
+            </button>
+          </div>
+
+          <div class="preview-box" x-show="stagedUploadType === 'image'" x-cloak>
+            <img :src="stagedUploadPreviewUrl" alt="Anteprima file caricato" class="preview-image">
+          </div>
+
+          <div class="preview-box" x-show="stagedUploadType === 'pdf' || stagedUploadType === 'text'" x-cloak>
+            <iframe :src="stagedUploadPreviewUrl" class="preview-frame" title="Anteprima file caricato"></iframe>
+          </div>
+        </div>
+      </div>
+
+      <form
+        id="print-form"
+        class="form-grid print-block"
+        hx-post="/jobs"
+        hx-target="#job-area"
+        hx-swap="innerHTML"
+        x-on:submit="handlePrintSubmit($event)"
+        x-on:htmx:before-request.window="handleBeforePrintRequest($event)"
+        x-on:htmx:after-request.window="handleAfterPrintRequest($event)"
+      >
+        <input type="hidden" name="uploaded_file_id" :value="stagedUploadId">
 
         <label x-show="showPdfPassword" x-cloak>
           <span>Password PDF (opzionale)</span>
@@ -144,7 +300,7 @@
             name="pdf_password"
             autocomplete="off"
             placeholder="Solo per PDF protetti"
-            x-bind:disabled="!backendReady || !showPdfPassword"
+            x-bind:disabled="!backendReady || !showPdfPassword || !stagedUploadId"
           >
           <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
         </label>
@@ -194,18 +350,12 @@
         <button
           type="submit"
           class="btn"
-          {% if not backend_ready or not printers %}disabled{% endif %}
+          :disabled="!backendReady || !stagedUploadId || uploading || sendingPrint"
+          {% if not printers %}disabled{% endif %}
         >
           Invia in stampa
         </button>
       </form>
-
-      <div class="upload-meter" x-show="sending || uploadProgress > 0" x-cloak>
-        <div class="track">
-          <div class="fill" :style="`width:${uploadProgress}%`"></div>
-        </div>
-        <p>Upload: <strong x-text="`${uploadProgress}%`"></strong></p>
-      </div>
     </section>
 
     <section class="card printer-monitor">

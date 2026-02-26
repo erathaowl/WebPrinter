@@ -7,12 +7,13 @@ import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from mimetypes import guess_type
 from pathlib import Path
 from threading import Lock
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader, PdfWriter
@@ -42,6 +43,7 @@ ALLOWED_EXTENSIONS = {
     ".tiff",
     ".webp",
 }
+UPLOAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{8,64}$")
 TERMINAL_STATUSES = {"completed", "failed"}
 STATUS_LABELS = {
     "queued": "In coda",
@@ -76,6 +78,21 @@ class PrintJob:
     printer_job_id: Optional[str] = None
 
 
+@dataclass
+class UploadedFileEntry:
+    """Represents a staged file upload before print submission."""
+
+    id: str
+    filename: str
+    mime_type: str
+    temp_path: Path
+    total_chunks: int
+    next_chunk_index: int = 0
+    uploaded_bytes: int = 0
+    stored_path: Optional[Path] = None
+    completed: bool = False
+
+
 class JobRegistry:
     """Thread-safe in-memory storage for print jobs."""
 
@@ -106,10 +123,47 @@ class JobRegistry:
             return replace(job)
 
 
+class UploadRegistry:
+    """Thread-safe in-memory storage for chunked file uploads."""
+
+    def __init__(self) -> None:
+        """Initialize upload map and lock."""
+        self._uploads: dict[str, UploadedFileEntry] = {}
+        self._lock = Lock()
+
+    def get(self, upload_id: str) -> Optional[UploadedFileEntry]:
+        """Return a snapshot copy of an upload entry, if available."""
+        with self._lock:
+            entry = self._uploads.get(upload_id)
+            return replace(entry) if entry else None
+
+    def create_or_replace(self, entry: UploadedFileEntry) -> None:
+        """Create or replace an upload entry."""
+        with self._lock:
+            self._uploads[entry.id] = entry
+
+    def update(self, upload_id: str, **changes: object) -> Optional[UploadedFileEntry]:
+        """Apply field updates to an upload and return a snapshot."""
+        with self._lock:
+            entry = self._uploads.get(upload_id)
+            if not entry:
+                return None
+            for key, value in changes.items():
+                setattr(entry, key, value)
+            return replace(entry)
+
+    def pop(self, upload_id: str) -> Optional[UploadedFileEntry]:
+        """Remove and return an upload entry."""
+        with self._lock:
+            entry = self._uploads.pop(upload_id, None)
+            return replace(entry) if entry else None
+
+
 app = FastAPI(title="WebPrinter")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 jobs = JobRegistry()
+uploads = UploadRegistry()
 executor = ThreadPoolExecutor(max_workers=2)
 printer_backend, backend_boot_error = build_backend()
 
@@ -177,27 +231,28 @@ def printer_status(request: Request, printer: Optional[str] = None) -> HTMLRespo
 @app.post("/jobs", response_class=HTMLResponse)
 def create_job(
     request: Request,
-    file: UploadFile = File(...),
+    uploaded_file_id: str = Form(...),
     printer: str = Form(...),
     color_mode: str = Form("bw"),
     copies: int = Form(1),
     duplex: Optional[str] = Form(None),
     pdf_password: Optional[str] = Form(None),
 ) -> HTMLResponse:
-    """Validate input, queue a print job, and return its initial status panel."""
+    """Queue a print job using a previously uploaded file."""
     if printer_backend is None:
         error_job = _error_job(
-            filename=file.filename or "sconosciuto",
+            filename="sconosciuto",
             message="Backend di stampa non disponibile.",
             error=backend_boot_error
             or "Configura CUPS o SumatraPDF e riavvia l'applicazione.",
         )
         return _render_job(request, error_job)
 
-    saved_path: Optional[Path] = None
     prepared_path: Optional[Path] = None
+    upload_entry: Optional[UploadedFileEntry] = None
     try:
-        filename = _validate_upload(file)
+        upload_entry = _consume_uploaded_file(uploaded_file_id)
+        filename = upload_entry.filename
         validated_color = _validate_color_mode(color_mode)
         validated_copies = _validate_copies(copies)
         validated_duplex = _as_bool(duplex)
@@ -207,10 +262,9 @@ def create_job(
             raise ValueError("Stampante selezionata non valida.")
 
         job_id = uuid.uuid4().hex
-        saved_path = _store_uploaded_file(file=file, original_name=filename, job_id=job_id)
-        prepared_path = _prepare_pdf_for_print(saved_path, pdf_password)
+        prepared_path = _prepare_pdf_for_print(upload_entry.stored_path or Path(), pdf_password)
         queued_message = "File caricato, in attesa di stampa."
-        if prepared_path != saved_path:
+        if upload_entry.stored_path and prepared_path != upload_entry.stored_path:
             queued_message = "PDF protetto decriptato, in attesa di stampa."
         job = PrintJob(
             id=job_id,
@@ -229,16 +283,124 @@ def create_job(
         return _render_job(request, job)
 
     except (ValueError, PrintBackendError) as exc:
-        if prepared_path and prepared_path.exists():
+        if prepared_path and prepared_path.exists() and upload_entry and prepared_path != upload_entry.stored_path:
             prepared_path.unlink(missing_ok=True)
-        if saved_path and saved_path.exists():
-            saved_path.unlink(missing_ok=True)
+        if upload_entry and upload_entry.stored_path and upload_entry.stored_path.exists():
+            upload_entry.stored_path.unlink(missing_ok=True)
         error_job = _error_job(
-            filename=file.filename or "sconosciuto",
+            filename=upload_entry.filename if upload_entry else "sconosciuto",
             message="Richiesta non valida.",
             error=str(exc),
         )
         return _render_job(request, error_job)
+
+
+@app.post("/uploads/chunk")
+async def upload_chunk(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    original_name: str = Form(...),
+    mime_type: str = Form("application/octet-stream"),
+    chunk: UploadFile = File(...),
+) -> JSONResponse:
+    """Receive one chunk of a file and assemble it on disk."""
+    normalized_upload_id = _validate_upload_id(upload_id)
+    filename = _validate_filename(original_name)
+    total_chunks = _validate_total_chunks(total_chunks)
+    if chunk_index < 0:
+        raise HTTPException(status_code=400, detail="Indice chunk non valido.")
+
+    part_path = UPLOAD_DIR / f"{normalized_upload_id}.part"
+    entry = uploads.get(normalized_upload_id)
+    if chunk_index == 0:
+        _cleanup_file_paths(part_path)
+        fresh_entry = UploadedFileEntry(
+            id=normalized_upload_id,
+            filename=filename,
+            mime_type=mime_type or "application/octet-stream",
+            temp_path=part_path,
+            total_chunks=total_chunks,
+        )
+        uploads.create_or_replace(fresh_entry)
+        entry = fresh_entry
+
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Upload non inizializzato.")
+    if entry.completed:
+        raise HTTPException(status_code=409, detail="Upload gia completato.")
+    if entry.total_chunks != total_chunks:
+        raise HTTPException(status_code=409, detail="Numero chunk incoerente.")
+    if entry.next_chunk_index != chunk_index:
+        raise HTTPException(status_code=409, detail="Chunk fuori sequenza.")
+
+    data = await chunk.read()
+    mode = "wb" if chunk_index == 0 else "ab"
+    with entry.temp_path.open(mode) as destination:
+        destination.write(data)
+
+    uploaded_bytes = entry.uploaded_bytes + len(data)
+    is_last = chunk_index + 1 >= total_chunks
+
+    if is_last:
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", entry.filename)
+        final_path = UPLOAD_DIR / f"{normalized_upload_id}_{safe_name}"
+        _cleanup_file_paths(final_path)
+        entry.temp_path.replace(final_path)
+        uploads.update(
+            normalized_upload_id,
+            next_chunk_index=chunk_index + 1,
+            uploaded_bytes=uploaded_bytes,
+            stored_path=final_path,
+            completed=True,
+        )
+        return JSONResponse(
+            {
+                "completed": True,
+                "upload_id": normalized_upload_id,
+                "filename": entry.filename,
+                "preview_url": f"/uploads/{normalized_upload_id}/preview",
+                "file_type": _preview_kind(entry.filename),
+            }
+        )
+
+    uploads.update(
+        normalized_upload_id,
+        next_chunk_index=chunk_index + 1,
+        uploaded_bytes=uploaded_bytes,
+    )
+    return JSONResponse(
+        {
+            "completed": False,
+            "upload_id": normalized_upload_id,
+            "chunk_index": chunk_index,
+            "total_chunks": total_chunks,
+        }
+    )
+
+
+@app.delete("/uploads/{upload_id}")
+def delete_uploaded_file(upload_id: str) -> JSONResponse:
+    """Delete a staged upload (temporary or fully assembled)."""
+    normalized_upload_id = _validate_upload_id(upload_id)
+    entry = uploads.pop(normalized_upload_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Upload non trovato.")
+
+    _cleanup_file_paths(entry.temp_path, entry.stored_path)
+    return JSONResponse({"deleted": True, "upload_id": normalized_upload_id})
+
+
+@app.get("/uploads/{upload_id}/preview")
+def preview_uploaded_file(upload_id: str) -> FileResponse:
+    """Serve the uploaded file for post-upload preview."""
+    entry = _require_completed_upload(upload_id)
+    media_type = entry.mime_type or guess_type(entry.filename)[0] or "application/octet-stream"
+    return FileResponse(
+        path=entry.stored_path,
+        media_type=media_type,
+        filename=entry.filename,
+    )
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
@@ -342,6 +504,33 @@ def _validate_upload(file: UploadFile) -> str:
     return clean_name
 
 
+def _validate_filename(filename: str) -> str:
+    """Validate a plain filename and allowed extension."""
+    clean_name = Path((filename or "").strip()).name
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Nome file non valido.")
+    extension = Path(clean_name).suffix.lower()
+    if extension not in ALLOWED_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Formato non supportato. Usa: {allowed}")
+    return clean_name
+
+
+def _validate_upload_id(upload_id: str) -> str:
+    """Validate upload identifier format."""
+    normalized = (upload_id or "").strip()
+    if not UPLOAD_ID_PATTERN.fullmatch(normalized):
+        raise HTTPException(status_code=400, detail="Upload ID non valido.")
+    return normalized
+
+
+def _validate_total_chunks(total_chunks: int) -> int:
+    """Validate chunk count constraints."""
+    if total_chunks < 1 or total_chunks > 5000:
+        raise HTTPException(status_code=400, detail="Numero chunk non valido.")
+    return total_chunks
+
+
 def _validate_color_mode(color_mode: str) -> str:
     """Validate and normalize the selected color mode."""
     mode = (color_mode or "").lower()
@@ -402,6 +591,49 @@ def _prepare_pdf_for_print(file_path: Path, pdf_password: Optional[str]) -> Path
 
     file_path.unlink(missing_ok=True)
     return output_path
+
+
+def _consume_uploaded_file(uploaded_file_id: str) -> UploadedFileEntry:
+    """Remove an uploaded file from staging and return its metadata."""
+    upload_id = _validate_upload_id(uploaded_file_id)
+    entry = uploads.pop(upload_id)
+    if not entry or not entry.completed or not entry.stored_path:
+        raise ValueError("File non caricato o upload incompleto.")
+    if not entry.stored_path.exists():
+        raise ValueError("File caricato non disponibile sul server.")
+    return entry
+
+
+def _require_completed_upload(upload_id: str) -> UploadedFileEntry:
+    """Load a completed upload entry or raise HTTP errors."""
+    normalized = _validate_upload_id(upload_id)
+    entry = uploads.get(normalized)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Upload non trovato.")
+    if not entry.completed or not entry.stored_path:
+        raise HTTPException(status_code=409, detail="Upload non ancora completato.")
+    if not entry.stored_path.exists():
+        raise HTTPException(status_code=404, detail="File caricato non disponibile.")
+    return entry
+
+
+def _preview_kind(filename: str) -> str:
+    """Classify the uploaded file for frontend preview rendering."""
+    extension = Path(filename).suffix.lower()
+    if extension in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp"}:
+        return "image"
+    if extension == ".pdf":
+        return "pdf"
+    if extension == ".txt":
+        return "text"
+    return "other"
+
+
+def _cleanup_file_paths(*paths: Optional[Path]) -> None:
+    """Best-effort cleanup helper for uploaded file paths."""
+    for path in paths:
+        if path and path.exists():
+            path.unlink(missing_ok=True)
 
 
 def _resolve_printer_name(printer: Optional[str]) -> Optional[str]:
