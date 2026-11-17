@@ -1,0 +1,81 @@
+{% if status_error %}
+  <div class="printer-status-message error">{{ status_error }}</div>
+{% elif not status_snapshot %}
+  <div class="printer-status-message">Stato stampante non disponibile.</div>
+{% else %}
+  <div class="printer-status-header">
+    <h3>{{ status_snapshot.printer }}</h3>
+    <p class="status-chip printer-state-{{ status_snapshot.state }}">
+      {{ printer_state_labels.get(status_snapshot.state, status_snapshot.state) }}
+    </p>
+  </div>
+
+  <p class="printer-summary">{{ status_snapshot.message }}</p>
+
+  <dl class="printer-meta">
+    <div>
+      <dt>Coda</dt>
+      <dd>{{ status_snapshot.queue_length }} job</dd>
+    </div>
+    <div>
+      <dt>Abilitata</dt>
+      <dd>
+        {% if status_snapshot.enabled is none %}
+          N/D
+        {% elif status_snapshot.enabled %}
+          Si
+        {% else %}
+          No
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>Accetta job</dt>
+      <dd>
+        {% if status_snapshot.accepting_jobs is none %}
+          N/D
+        {% elif status_snapshot.accepting_jobs %}
+          Si
+        {% else %}
+          No
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>URI</dt>
+      <dd class="mono">{{ status_snapshot.device_uri or "N/D" }}</dd>
+    </div>
+  </dl>
+
+  {% if status_snapshot.reasons %}
+    <p class="printer-reasons">Segnalazioni: {{ ", ".join(status_snapshot.reasons) }}</p>
+  {% endif %}
+
+  <h4 class="toner-title">Toner</h4>
+  {% if status_snapshot.toner_levels %}
+    <ul class="toner-list">
+      {% for toner in status_snapshot.toner_levels %}
+        <li class="toner-item">
+          <div class="toner-row">
+            <span>{{ toner.name }}</span>
+            <strong>
+              {% if toner.percent is none %}
+                N/D
+              {% else %}
+                {{ toner.percent }}%
+              {% endif %}
+            </strong>
+          </div>
+          <div class="toner-track">
+            <div
+              class="toner-fill toner-{{ toner.color_key }}"
+              style="width: {% if toner.percent is none %}0{% else %}{{ toner.percent }}{% endif %}%;"
+            ></div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="field-note">{{ status_snapshot.toner_note or "Livelli toner non disponibili." }}</p>
+  {% endif %}
+{% endif %}

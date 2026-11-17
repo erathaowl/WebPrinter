@@ -1,0 +1,50 @@
+<article
+  id="job-{{ job.id }}"
+  class="job-card {% if job.status == 'completed' %}ok{% elif job.status == 'failed' %}err{% endif %}"
+  {% if job.status not in terminal_statuses %}
+  hx-get="/jobs/{{ job.id }}"
+  hx-trigger="every 2s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  <header>
+    <h2>Job {{ job.id[:8] }}</h2>
+    <p class="status-chip status-{{ job.status }}">{{ status_labels.get(job.status, job.status) }}</p>
+  </header>
+
+  <dl class="meta">
+    <div>
+      <dt>File</dt>
+      <dd>{{ job.filename }}</dd>
+    </div>
+    <div>
+      <dt>Stampante</dt>
+      <dd>{{ job.printer }}</dd>
+    </div>
+    <div>
+      <dt>Copie</dt>
+      <dd>{{ job.copies }}</dd>
+    </div>
+    <div>
+      <dt>Colore</dt>
+      <dd>{% if job.color_mode == "color" %}Colori{% else %}B/N{% endif %}</dd>
+    </div>
+    <div>
+      <dt>Fronte/retro</dt>
+      <dd>{% if job.duplex %}Si{% else %}No{% endif %}</dd>
+    </div>
+  </dl>
+
+  <div class="progress">
+    <div class="progress-fill" style="width: {{ job.progress }}%;"></div>
+  </div>
+  <p class="message">{{ job.message }}</p>
+
+  {% if job.printer_job_id %}
+    <p class="queue-id">ID coda: <strong>{{ job.printer_job_id }}</strong></p>
+  {% endif %}
+
+  {% if job.error %}
+    <pre class="error-detail">{{ job.error }}</pre>
+  {% endif %}
+</article>
