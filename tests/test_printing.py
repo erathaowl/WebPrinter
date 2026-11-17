@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -341,3 +343,50 @@ def test_corrupt_image_fails_safely_without_temporary_files(service, monkeypatch
     assert application.jobs.get(job.id).status == "failed"
     assert not source.exists()
     assert not backend.printed
+
+
+@pytest.mark.parametrize("lpadmin_exit", [0, 1])
+def test_entrypoint_starts_web_app_after_printer_setup(tmp_path, lpadmin_exit):
+    """Printer configuration errors must not trigger a container restart loop."""
+    commands = {
+        "mkdir": "exit 0",
+        "cupsd": "exit 0",
+        "lpstat": f'if [ "$1" = "-r" ]; then exit 0; fi\nexit {lpadmin_exit}',
+        "lpadmin": f'echo "lpadmin: Success" >&2\nexit {lpadmin_exit}',
+        "cupsenable": "exit 0",
+        "cupsaccept": "exit 0",
+        "lpoptions": "exit 0",
+        "uvicorn": 'echo "UVICORN_MOCK_STARTED $*"',
+    }
+    for name, body in commands.items():
+        executable = tmp_path / name
+        executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{tmp_path}:{environment['PATH']}",
+            "PRINTER_NAME": "TestPrinter",
+            "PRINTER_ADDRESS": "ipp://127.0.0.1/ipp/print",
+            "APP_HOST": "127.0.0.1",
+            "APP_PORT": "8080",
+        }
+    )
+    script = Path(__file__).resolve().parents[1] / "docker" / "entrypoint.sh"
+    result = subprocess.run(
+        ["sh", str(script)],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "UVICORN_MOCK_STARTED app:app --host 127.0.0.1 --port 8080" in result.stdout
+    if lpadmin_exit:
+        assert "lpadmin failed with exit code 1" in result.stderr
+        assert "Printer queue 'TestPrinter' is unavailable" in result.stderr
+    else:
+        assert "CUPS printer 'TestPrinter' configured." in result.stdout

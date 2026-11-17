@@ -125,6 +125,7 @@ Job status refreshes every **2 seconds** until completion or failure. The monito
 - **Toner unavailable:** check `ipptool` and the printer's IPP support. Missing toner levels do not prevent printing.
 - **PDF rejected:** make sure it is not corrupted and the password is correct. After a failed submission, you may need to upload the file again.
 - **Container issues:** inspect `docker compose logs webprinter` and check the printer name, URI, and reachability from the container.
+- **`lpadmin: Success` followed by a warning:** CUPS can report a misleading error when the printer does not support IPP Everywhere or the configured IPP URI is incorrect. The web server starts even if printer setup fails. Inspect `docker compose exec webprinter sh -c 'lpstat -t; tail -n 50 /var/log/cups/error_log'` and check the printer URI and IPP Everywhere compatibility before printing.
 
 ## License
 

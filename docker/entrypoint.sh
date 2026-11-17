@@ -33,10 +33,25 @@ if ! lpstat -r >/dev/null 2>&1; then
   exit 1
 fi
 
-# Requested command with values coming from compose environment variables.
-lpadmin -E -p "$PRINTER_NAME" -v "$PRINTER_ADDRESS" -m everywhere
-cupsenable "$PRINTER_NAME" || true
-cupsaccept "$PRINTER_NAME" || true
-lpoptions -d "$PRINTER_NAME" || true
+# Configure CUPS without stopping the web application on printer errors.
+if lpadmin -E -p "$PRINTER_NAME" -v "$PRINTER_ADDRESS" -m everywhere; then
+  echo "CUPS printer '$PRINTER_NAME' configured."
+else
+  status=$?
+  echo "WARNING: lpadmin failed with exit code $status." >&2
+  echo "Check PRINTER_ADDRESS and IPP Everywhere support." >&2
+  if [ -s /var/log/cups/error_log ]; then
+    echo "Recent CUPS errors:" >&2
+    tail -n 30 /var/log/cups/error_log >&2
+  fi
+fi
+
+if lpstat -p "$PRINTER_NAME" >/dev/null 2>&1; then
+  cupsenable "$PRINTER_NAME" || true
+  cupsaccept "$PRINTER_NAME" || true
+  lpoptions -d "$PRINTER_NAME" || true
+else
+  echo "WARNING: Printer queue '$PRINTER_NAME' is unavailable. WebPrinter will still start." >&2
+fi
 
 exec uvicorn app:app --host "$APP_HOST" --port "$APP_PORT"

@@ -125,6 +125,7 @@ Lo stato del job viene aggiornato ogni **2 secondi**, fino al completamento o al
 - **Toner non disponibile:** verifica `ipptool` e il supporto IPP della stampante. L'assenza dei livelli non impedisce la stampa.
 - **PDF rifiutato:** verifica che non sia corrotto e che la password sia corretta. Dopo un invio fallito può essere necessario caricare nuovamente il file.
 - **Problemi nel container:** consulta `docker compose logs webprinter` e verifica nome, URI e raggiungibilità della stampante dal container.
+- **`lpadmin: Success` seguito da un avviso:** CUPS può riportare un errore fuorviante se la stampante non supporta IPP Everywhere o l'URI IPP è errato. Il server web si avvia anche quando la configurazione della stampante fallisce. Controlla `docker compose exec webprinter sh -c 'lpstat -t; tail -n 50 /var/log/cups/error_log'` e verifica URI e compatibilità IPP Everywhere prima di stampare.
 
 ## Licenza
 
