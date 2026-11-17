@@ -371,6 +371,8 @@ def test_entrypoint_starts_web_app_after_printer_setup(tmp_path, lpadmin_exit):
             "PRINTER_ADDRESS": "ipp://127.0.0.1/ipp/print",
             "APP_HOST": "127.0.0.1",
             "APP_PORT": "8080",
+            "WEBPRINTER_PRINTER_STATUS_FILE": str(tmp_path / "printer-error"),
+            "WEBPRINTER_RETRY_INTERVAL": "0",
         }
     )
     script = Path(__file__).resolve().parents[1] / "docker" / "entrypoint.sh"
@@ -385,8 +387,65 @@ def test_entrypoint_starts_web_app_after_printer_setup(tmp_path, lpadmin_exit):
 
     assert result.returncode == 0
     assert "UVICORN_MOCK_STARTED app:app --host 127.0.0.1 --port 8080" in result.stdout
+    status_file = tmp_path / "printer-error"
     if lpadmin_exit:
-        assert "lpadmin failed with exit code 1" in result.stderr
-        assert "Printer queue 'TestPrinter' is unavailable" in result.stderr
+        assert "Printer setup failed (exit code 1)" in result.stderr
+        assert status_file.exists()
+        assert "lpadmin: Success" in status_file.read_text(encoding="utf-8")
     else:
         assert "CUPS printer 'TestPrinter' configured." in result.stdout
+        assert not status_file.exists()
+
+
+def test_printer_monitor_reports_configuration_failure_and_recovers(
+    service, monkeypatch, tmp_path
+):
+    client, backend, _ = service
+    status_file = tmp_path / "printer-error"
+    status_file.write_text(
+        "Printer setup failed (exit code 1). Check power and IPP address.",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(application, "PRINTER_STATUS_FILE", status_file)
+    monkeypatch.setenv("PRINTER_NAME", "TestPrinter")
+    monkeypatch.setattr(backend, "default_printer", lambda: None)
+    monkeypatch.setattr(backend, "list_printers", lambda: [])
+
+    unavailable = client.get("/printer-status")
+    assert unavailable.status_code == 200
+    assert "Printer setup failed (exit code 1)" in unavailable.text
+
+    status_file.unlink()
+    monkeypatch.setattr(
+        backend,
+        "get_status",
+        lambda name: application.PrinterStatusSnapshot(
+            printer=name,
+            state="idle",
+            message="Printer is ready.",
+            enabled=True,
+            accepting_jobs=True,
+            queue_length=0,
+            device_uri="ipp://127.0.0.1/ipp/print",
+            reasons=[],
+            toner_levels=[],
+        ),
+    )
+    recovered = client.get("/printer-status")
+    assert recovered.status_code == 200
+    assert "Printer is ready." in recovered.text
+    assert "Printer setup failed" not in recovered.text
+
+
+def test_printer_monitor_escapes_error_output(service, monkeypatch, tmp_path):
+    client, _, _ = service
+    status_file = tmp_path / "printer-error"
+    status_file.write_text("<script>alert(1)</script>", encoding="utf-8")
+    monkeypatch.setattr(application, "PRINTER_STATUS_FILE", status_file)
+    monkeypatch.setenv("PRINTER_NAME", "TestPrinter")
+
+    response = client.get("/printer-status?printer=TestPrinter")
+
+    assert response.status_code == 200
+    assert "<script>" not in response.text
+    assert "&lt;script&gt;" in response.text

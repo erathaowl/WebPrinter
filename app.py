@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import uuid
@@ -30,6 +31,7 @@ from print_backend import (
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = Path.cwd() / "uploads"
+PRINTER_STATUS_FILE = Path(os.getenv("WEBPRINTER_PRINTER_STATUS_FILE", "/run/webprinter/printer-error"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -226,15 +228,24 @@ def printer_status(request: Request, printer: Optional[str] = None) -> HTMLRespo
     error: Optional[str] = None
 
     selected_printer = _resolve_printer_name(printer)
+    configured_printer = os.getenv("PRINTER_NAME", "").strip()
     if printer_backend is None:
         error = backend_boot_error or "Backend di stampa non disponibile."
     elif not selected_printer:
         error = "Nessuna stampante disponibile."
     else:
-        try:
-            snapshot = printer_backend.get_status(selected_printer)
-        except PrintBackendError as exc:
-            error = str(exc)
+        if selected_printer == configured_printer:
+            try:
+                error = PRINTER_STATUS_FILE.read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()[:500] or None
+            except OSError:
+                pass
+        if error is None:
+            try:
+                snapshot = printer_backend.get_status(selected_printer)
+            except PrintBackendError as exc:
+                error = str(exc)
 
     return TEMPLATES.TemplateResponse(
         request=request,
@@ -720,8 +731,8 @@ def _resolve_printer_name(printer: Optional[str]) -> Optional[str]:
         if printers:
             return printers[0]
     except PrintBackendError:
-        return None
-    return None
+        pass
+    return os.getenv("PRINTER_NAME", "").strip() or None
 
 
 def _as_bool(value: Optional[str]) -> bool:

@@ -48,7 +48,7 @@ L'immagine pronta all'uso è pubblicata su [GitHub Container Registry](https://g
 docker pull ghcr.io/erathaowl/webprinter:latest
 ```
 
-Puoi utilizzare una versione specifica, ad esempio `ghcr.io/erathaowl/webprinter:v1.1`. È necessaria una stampante IPP raggiungibile dalla rete del container, compatibile con il modello driverless `everywhere` di CUPS.
+Puoi utilizzare una versione specifica, ad esempio `ghcr.io/erathaowl/webprinter:v1.0.0`. È necessaria una stampante IPP raggiungibile dalla rete del container, compatibile con il modello driverless `everywhere` di CUPS.
 
 ### Docker Compose (consigliato)
 

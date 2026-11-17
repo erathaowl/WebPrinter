@@ -48,7 +48,7 @@ The ready-to-use image is published on [GitHub Container Registry](https://githu
 docker pull ghcr.io/erathaowl/webprinter:latest
 ```
 
-You can pin a release using a version tag, for example `ghcr.io/erathaowl/webprinter:v1.1`. The container requires an IPP printer reachable from its network, compatible with the CUPS `everywhere` driverless model.
+You can pin a release using a version tag, for example `ghcr.io/erathaowl/webprinter:v1.0.0`. The container requires an IPP printer reachable from its network, compatible with the CUPS `everywhere` driverless model.
 
 ### Docker Compose (recommended)
 

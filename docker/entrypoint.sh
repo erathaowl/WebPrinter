@@ -33,25 +33,41 @@ if ! lpstat -r >/dev/null 2>&1; then
   exit 1
 fi
 
-# Configure CUPS without stopping the web application on printer errors.
-if lpadmin -E -p "$PRINTER_NAME" -v "$PRINTER_ADDRESS" -m everywhere; then
-  echo "CUPS printer '$PRINTER_NAME' configured."
-else
-  status=$?
-  echo "WARNING: lpadmin failed with exit code $status." >&2
-  echo "Check PRINTER_ADDRESS and IPP Everywhere support." >&2
-  if [ -s /var/log/cups/error_log ]; then
-    echo "Recent CUPS errors:" >&2
-    tail -n 30 /var/log/cups/error_log >&2
-  fi
-fi
+# Keep printer errors visible to the web status endpoint.
+status_file="${WEBPRINTER_PRINTER_STATUS_FILE:-/run/webprinter/printer-error}"
+mkdir -p "$(dirname "$status_file")"
+rm -f "$status_file"
 
-if lpstat -p "$PRINTER_NAME" >/dev/null 2>&1; then
-  cupsenable "$PRINTER_NAME" || true
-  cupsaccept "$PRINTER_NAME" || true
-  lpoptions -d "$PRINTER_NAME" || true
-else
-  echo "WARNING: Printer queue '$PRINTER_NAME' is unavailable. WebPrinter will still start." >&2
+configure_printer() {
+  if output=$(lpadmin -E -p "$PRINTER_NAME" -v "$PRINTER_ADDRESS" -m everywhere 2>&1); then
+    rm -f "$status_file"
+    echo "CUPS printer '$PRINTER_NAME' configured."
+    cupsenable "$PRINTER_NAME" || true
+    cupsaccept "$PRINTER_NAME" || true
+    lpoptions -d "$PRINTER_NAME" || true
+    return 0
+  else
+    status=$?
+  fi
+  message="Printer setup failed (exit code $status). Check power, network, and IPP address. $output"
+  printf '%s\n' "$message" > "$status_file.tmp"
+  mv -f "$status_file.tmp" "$status_file"
+  echo "WARNING: $message" >&2
+  return 1
+}
+
+if ! configure_printer; then
+  # Retry in the background while the web application remains available.
+  retry_interval="${WEBPRINTER_RETRY_INTERVAL:-30}"
+  if [ "$retry_interval" -gt 0 ] 2>/dev/null; then
+    (
+      while sleep "$retry_interval"; do
+        if configure_printer; then
+          exit 0
+        fi
+      done
+    ) >> /var/log/webprinter-printer-setup.log 2>&1 &
+  fi
 fi
 
 exec uvicorn app:app --host "$APP_HOST" --port "$APP_PORT"
