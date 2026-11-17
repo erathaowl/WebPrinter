@@ -23,7 +23,7 @@ jobs:
           enable-cache: true
 
       - name: Check dependency lock
-        run: uv lock && git diff -- uv.lock && git diff --exit-code -- uv.lock
+        run: uv lock --check
 
       - name: Check Python syntax
         run: python -m compileall -q app.py print_backend.py
