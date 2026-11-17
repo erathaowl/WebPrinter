@@ -1,0 +1,33 @@
+name: Bootstrap v1.0 release
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/bootstrap-release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Create release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0" >/dev/null 2>&1; then
+            echo "Tag v1.0 already exists"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/v1.0" -f "sha=$GITHUB_SHA"
+          fi
+
+      - name: Dispatch release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref v1.0 --repo "$GITHUB_REPOSITORY"
