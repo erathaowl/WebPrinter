@@ -430,6 +430,7 @@ def test_printer_monitor_reports_configuration_failure_and_recovers(
             reasons=[],
             toner_levels=[],
         ),
+        raising=False,
     )
     recovered = client.get("/printer-status")
     assert recovered.status_code == 200
