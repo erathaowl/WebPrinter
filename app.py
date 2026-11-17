@@ -27,7 +27,7 @@ from print_backend import (
 
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR = Path.cwd() / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
