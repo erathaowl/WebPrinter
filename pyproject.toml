@@ -12,3 +12,10 @@ dependencies = [
     "reportlab>=4.4.10",
     "uvicorn[standard]>=0.41.0",
 ]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["app.py", "print_backend.py", "static", "templates"]
