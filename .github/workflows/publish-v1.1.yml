@@ -1,0 +1,34 @@
+name: Publish v1.1
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/publish-v1.1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Create the verified release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.1" >/dev/null 2>&1; then
+            echo "Tag v1.1 already exists" >&2
+            exit 1
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/v1.1" \
+            -f "sha=c49d238bf6ed526467ede5dd2cca3e73839e7649"
+
+      - name: Run the release pipeline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref v1.1 --repo "$GITHUB_REPOSITORY"
