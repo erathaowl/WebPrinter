@@ -1,8 +1,9 @@
 services:
   webprinter:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/erathaowl/webprinter:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     container_name: webprinter
     hostname: webprinter
     ports:

@@ -42,7 +42,17 @@ Start the server using `app:app`: `main.py` is only a demonstration script and d
 
 ## Run with Docker and CUPS
 
-You need Docker with the Compose plugin and an IPP printer reachable from the container, compatible with the CUPS `everywhere` driverless model.
+The ready-to-use image is published on [GitHub Container Registry](https://github.com/erathaowl/WebPrinter/pkgs/container/webprinter):
+
+```bash
+docker pull ghcr.io/erathaowl/webprinter:latest
+```
+
+You can pin a release using a version tag, for example `ghcr.io/erathaowl/webprinter:v1.1`. The container requires an IPP printer reachable from its network, compatible with the CUPS `everywhere` driverless model.
+
+### Docker Compose (recommended)
+
+You need Docker with the Compose plugin.
 
 1. Copy `.env.example` to `.env`.
 2. Configure the variables:
@@ -53,13 +63,32 @@ You need Docker with the Compose plugin and an IPP printer reachable from the co
    | `PRINTER_ADDRESS` | Printer URI, such as `ipp://192.168.1.50/ipp/print` (required). |
    | `APP_PORT` | HTTP port published on the host (default: `8000`). |
 
-3. Start the service:
+3. Pull the published image and start the service:
 
    ```bash
-   docker compose up --build
+   docker compose pull
+   docker compose up -d
    ```
 
-Open <http://localhost:8000>, or use the port configured in `APP_PORT`.
+The supplied `compose.yml` uses `ghcr.io/erathaowl/webprinter:latest`. To build locally instead, comment out `image:`, uncomment the `build:` section and run `docker compose up -d --build`.
+
+### Docker CLI
+
+Alternatively, start the published image without Compose:
+
+```bash
+docker run -d \
+  --name webprinter \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -e PRINTER_NAME=Office_IPP \
+  -e PRINTER_ADDRESS=ipp://192.168.1.50/ipp/print \
+  ghcr.io/erathaowl/webprinter:latest
+```
+
+Replace the example printer name and URI with your values. For Docker CLI, change `-p 8000:8000` if a different host port is needed.
+
+Open <http://localhost:8000>, or use the configured host port.
 
 The container installs CUPS tools and filters, starts `cupsd`, waits for it to become ready, and configures the printer with:
 

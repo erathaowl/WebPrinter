@@ -42,7 +42,17 @@ Il server viene avviato tramite `app:app`: `main.py` è soltanto uno script dimo
 
 ## Avvio con Docker e CUPS
 
-Servono Docker con il plugin Compose e una stampante IPP raggiungibile dal container, compatibile con il modello driverless `everywhere` di CUPS.
+L'immagine pronta all'uso è pubblicata su [GitHub Container Registry](https://github.com/erathaowl/WebPrinter/pkgs/container/webprinter):
+
+```bash
+docker pull ghcr.io/erathaowl/webprinter:latest
+```
+
+Puoi utilizzare una versione specifica, ad esempio `ghcr.io/erathaowl/webprinter:v1.1`. È necessaria una stampante IPP raggiungibile dalla rete del container, compatibile con il modello driverless `everywhere` di CUPS.
+
+### Docker Compose (consigliato)
+
+Serve Docker con il plugin Compose.
 
 1. Copia `.env.example` in `.env`.
 2. Configura le variabili:
@@ -53,13 +63,32 @@ Servono Docker con il plugin Compose e una stampante IPP raggiungibile dal conta
    | `PRINTER_ADDRESS` | URI della stampante, ad esempio `ipp://192.168.1.50/ipp/print` (obbligatorio). |
    | `APP_PORT` | Porta HTTP pubblicata sull'host (predefinita: `8000`). |
 
-3. Avvia il servizio:
+3. Scarica l'immagine pubblicata e avvia il servizio:
 
    ```bash
-   docker compose up --build
+   docker compose pull
+   docker compose up -d
    ```
 
-Apri <http://localhost:8000>, oppure usa la porta impostata in `APP_PORT`.
+Il file `compose.yml` utilizza `ghcr.io/erathaowl/webprinter:latest`. Per compilare localmente, commenta `image:`, decommenta la sezione `build:` ed esegui `docker compose up -d --build`.
+
+### Docker CLI
+
+In alternativa, puoi avviare l'immagine pubblicata senza Compose:
+
+```bash
+docker run -d \
+  --name webprinter \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -e PRINTER_NAME=Office_IPP \
+  -e PRINTER_ADDRESS=ipp://192.168.1.50/ipp/print \
+  ghcr.io/erathaowl/webprinter:latest
+```
+
+Sostituisci il nome e l'indirizzo della stampante di esempio con i tuoi valori. Con Docker CLI, modifica `-p 8000:8000` se desideri una porta diversa sull'host.
+
+Apri <http://localhost:8000>, oppure usa la porta configurata sull'host.
 
 Il container installa gli strumenti CUPS e i filtri, avvia `cupsd`, attende che sia pronto e configura la stampante con:
 
