@@ -6,13 +6,14 @@ A Python web application built with FastAPI for uploading documents and sending 
 
 ## Features
 
-- Upload one file at a time in chunks, with a progress indicator.
+- Upload multiple files concurrently (up to three at a time) in chunks, with overall progress and independent removal or preview. A batch supports up to 50 staged files.
 - Accepted formats: `.pdf`, `.txt`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.webp`. Actual printing depends on the formats supported by the backend and installed filters.
 - Expandable, resizable post-upload preview for images, PDFs, and text; rendering depends on browser support.
 - Delete an uploaded file before submitting it for printing.
 - Select a printer when more than one is available.
 - Print options: black and white (default) or color, 1–99 copies (default: 1), and long-edge duplex printing (off by default).
-- Encrypted PDF detection and password prompt to decrypt the document before printing.
+- Encrypted PDF detection and a separate password field for each protected document.
+- Shared print settings for all files in a batch. Images support **Fit** (default, retain the entire image) and **Fill** (center crop).
 - Background processing with status, progress, error details, and a CUPS queue ID when available.
 - Printer monitor showing status, queued job count, alerts, and toner levels when available.
 
@@ -70,11 +71,11 @@ It then attempts to enable the queue, accept jobs, and set it as the default, an
 
 ## Usage
 
-1. Select a file and click **Carica file sul server** (upload file to server).
-2. Once the upload finishes, check the preview if needed. You can delete the file before printing it.
-3. If the PDF is encrypted, enter its password in the field that appears.
-4. Choose the printer and options, then click **Invia in stampa** (send to printer).
-5. Check the job panel for the outcome and the monitor for printer status.
+1. Select one or more files and click **Carica file sul server** (upload files).
+2. Check the previews and remove individual files if needed. You can add further files to the batch.
+3. Enter a password for each encrypted PDF.
+4. Choose a printer and shared print settings, including **Adatta / Riempi** for images, and submit the batch.
+5. Follow each document's separate print job in the status panel.
 
 Job status refreshes every **2 seconds** until completion or failure. The monitor loads when the page opens and when the printer changes, then refreshes every **30 seconds**; the button beside the last-update timestamp toggles automatic refresh off or on.
 
@@ -82,7 +83,8 @@ Job status refreshes every **2 seconds** until completion or failure. The monito
 
 - **“Completed” means the backend has finished submitting the document**, not that it has physically printed. CUPS checks whether the job remains in the local queue for approximately 12 seconds; SumatraPDF reports its own process outcome.
 - Print progress represents submission stages, not the number of pages printed.
-- Files are stored in `uploads/`, which is created automatically. After job processing, the application attempts to delete them even on failure; encrypted PDFs are replaced with a temporary decrypted copy.
+- Files are stored in `uploads/`, created in the working directory. Accepted jobs clean up their source and temporary files, including decrypted PDFs.
+- Image layout applies only to image files. Images are rendered into temporary A4 PDFs, automatically rotated to match portrait or landscape orientation. Fit leaves a small white margin; Fill crops from the center. Physical edge-to-edge printing still depends on printer margins and driver support. Animated GIFs print their first frame; multi-page TIFFs print all frames.
 - Abandoned or interrupted uploads have no expiration or automatic periodic cleanup. They may remain on disk, especially after the process stops.
 - Jobs and upload metadata are stored only in memory. Use a single Uvicorn process, without multiple `--workers`: registries are not shared. The background pool has two processing threads.
 - Authentication, authorization, and an explicit overall file-size limit are not implemented. The server accepts at most 5,000 chunks per upload; the interface uses 512 KiB, 1 MiB, or 2 MiB chunks depending on file size.

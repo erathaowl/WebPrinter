@@ -1,0 +1,39 @@
+name: Checks
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Check Python syntax
+        run: python -m compileall -q app.py print_backend.py
+
+      - name: Check browser script syntax
+        run: node --check static/app.js
+
+      - name: Check HTML template syntax
+        run: |
+          uv run --with jinja2 python -c "from jinja2 import Environment; Environment().parse(open('templates/index.html', encoding='utf-8').read())"
+
+      - name: Run regression tests
+        run: uv run --with pytest --with httpx pytest -q
+
+      - name: Build Python package
+        run: uv build

@@ -1,0 +1,207 @@
+"""Regression tests for multi-file printing and image layout."""
+
+from __future__ import annotations
+
+import io
+import json
+from pathlib import Path
+from urllib.parse import urlencode
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+from pypdf import PdfReader, PdfWriter
+
+import app as application
+from print_backend import PrintBackendError, prepare_image_pdf
+
+
+class FakePrinterBackend:
+    def __init__(self) -> None:
+        self.printed = []
+
+    def list_printers(self) -> list[str]:
+        return ["TestPrinter"]
+
+    def print_file(self, file_path, options, progress):
+        self.printed.append((file_path.suffix, PdfReader(file_path) if file_path.suffix == ".pdf" else None, options))
+        progress(85, "Queued")
+        return "TestPrinter-42"
+
+
+class PendingExecutor:
+    def __init__(self) -> None:
+        self.job_ids = []
+
+    def submit(self, callback, job_id) -> None:
+        self.job_ids.append(job_id)
+
+
+@pytest.fixture
+def service(monkeypatch, tmp_path):
+    backend = FakePrinterBackend()
+    queue = PendingExecutor()
+    monkeypatch.setattr(application, "printer_backend", backend)
+    monkeypatch.setattr(application, "backend_boot_error", None)
+    monkeypatch.setattr(application, "executor", queue)
+    monkeypatch.setattr(application, "jobs", application.JobRegistry())
+    monkeypatch.setattr(application, "uploads", application.UploadRegistry())
+    monkeypatch.setattr(application, "UPLOAD_DIR", tmp_path)
+    return TestClient(application.app), backend, queue
+
+
+def upload(client, name: str, contents: bytes, identifier: str):
+    response = client.post(
+        "/uploads/chunk",
+        data={
+            "upload_id": identifier,
+            "chunk_index": "0",
+            "total_chunks": "1",
+            "original_name": name,
+            "mime_type": "application/octet-stream",
+        },
+        files={"chunk": (name, contents)},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["completed"]
+    return response.json()
+
+
+def submit(client, ids, **options):
+    fields = [("uploaded_file_id", identifier) for identifier in ids]
+    fields += [("printer", "TestPrinter")]
+    fields += list(options.items())
+    return client.post(
+        "/jobs",
+        content=urlencode(fields),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+
+def png_bytes(size=(120, 60)):
+    stream = io.BytesIO()
+    Image.new("RGB", size, "red").save(stream, format="PNG")
+    return stream.getvalue()
+
+
+def encrypted_pdf(password="correct"):
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    writer.encrypt(password)
+    stream = io.BytesIO()
+    writer.write(stream)
+    return stream.getvalue()
+
+
+def test_batch_queues_each_file_with_shared_settings(service):
+    client, backend, queue = service
+    upload(client, "one.png", png_bytes(), "uploadtest00001")
+    upload(client, "two.txt", b"hello", "uploadtest00002")
+
+    response = submit(
+        client,
+        ["uploadtest00001", "uploadtest00002"],
+        color_mode="color",
+        copies="2",
+        duplex="true",
+        image_mode="fill",
+    )
+
+    assert response.status_code == 200
+    assert response.headers["HX-Trigger"] == "print-batch-accepted"
+    assert response.text.count('class="job-card') == 2
+    assert len(queue.job_ids) == 2
+    assert application.uploads.get("uploadtest00001") is None
+    assert application.uploads.get("uploadtest00002") is None
+
+    for job_id in queue.job_ids:
+        job = application.jobs.get(job_id)
+        assert job.copies == 2
+        assert job.color_mode == "color"
+        assert job.duplex is True
+        assert job.image_mode == "fill"
+        application.process_print_job(job_id)
+        assert application.jobs.get(job_id).status == "completed"
+
+    assert backend.printed[0][0] == ".pdf"
+    assert backend.printed[0][1] is not None
+    assert backend.printed[1][0] == ".txt"
+    assert all(options.copies == 2 for _, _, options in backend.printed)
+
+
+def test_wrong_pdf_password_preserves_all_staged_files(service):
+    client, _, queue = service
+    upload(client, "secret.pdf", encrypted_pdf(), "uploadtest00003")
+    upload(client, "ordinary.txt", b"hello", "uploadtest00004")
+
+    response = submit(
+        client,
+        ["uploadtest00003", "uploadtest00004"],
+        pdf_passwords=json.dumps({"uploadtest00003": "incorrect"}),
+    )
+
+    assert response.status_code == 200
+    assert "HX-Trigger" not in response.headers
+    assert "Password PDF non valida" in response.text
+    assert not queue.job_ids
+    assert application.uploads.get("uploadtest00003").completed
+    assert application.uploads.get("uploadtest00004").completed
+
+
+def test_batch_rejects_duplicate_or_invalid_layout(service):
+    client, _, queue = service
+    upload(client, "one.txt", b"hello", "uploadtest00005")
+    assert "duplicati" in submit(client, ["uploadtest00005"] * 2).text
+    assert "Modalita" in submit(client, ["uploadtest00005"], image_mode="invalid").text
+    assert application.uploads.get("uploadtest00005").completed
+    assert not queue.job_ids
+
+
+def test_accepted_encrypted_pdf_is_printable(service):
+    client, backend, queue = service
+    upload(client, "secure.pdf", encrypted_pdf(), "uploadtest00006")
+    response = submit(
+        client,
+        ["uploadtest00006"],
+        pdf_passwords=json.dumps({"uploadtest00006": "correct"}),
+    )
+    assert response.headers["HX-Trigger"] == "print-batch-accepted"
+    application.process_print_job(queue.job_ids[0])
+    assert backend.printed[0][1].is_encrypted is False
+
+
+def test_image_layout_fit_and_fill(tmp_path):
+    image_path = tmp_path / "wide.png"
+    Image.new("RGB", (800, 200), "blue").save(image_path)
+    fit = prepare_image_pdf(image_path, "fit")
+    fill = prepare_image_pdf(image_path, "fill")
+    try:
+        fit_page = PdfReader(fit).pages[0]
+        fill_page = PdfReader(fill).pages[0]
+        assert float(fit_page.mediabox.width) > float(fit_page.mediabox.height)
+        assert abs(float(fill_page.mediabox.width) - float(fit_page.mediabox.width)) < 1
+        assert b"W*" not in fit_page.get_contents().get_data()
+        assert b"W*" in fill_page.get_contents().get_data()
+    finally:
+        fit.unlink()
+        fill.unlink()
+
+
+def test_multiframe_tiff_and_gif(tmp_path):
+    first = Image.new("RGB", (40, 60), "red")
+    second = Image.new("RGB", (40, 60), "blue")
+    tiff = tmp_path / "pages.tiff"
+    gif = tmp_path / "animated.gif"
+    first.save(tiff, save_all=True, append_images=[second])
+    first.save(gif, save_all=True, append_images=[second], duration=100)
+    for file, expected_pages in [(tiff, 2), (gif, 1)]:
+        output = prepare_image_pdf(file)
+        try:
+            assert len(PdfReader(output).pages) == expected_pages
+        finally:
+            output.unlink()
+
+
+def test_rejects_unknown_image_layout(tmp_path):
+    with pytest.raises(PrintBackendError):
+        prepare_image_pdf(tmp_path / "unused.png", "stretch")

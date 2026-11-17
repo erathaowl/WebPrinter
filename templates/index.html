@@ -5,246 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WebPrinter</title>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="/static/app.js"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <main
     class="page"
-    x-data="{
-      backendReady: {{ 'true' if backend_ready else 'false' }},
-      sendingPrint: false,
-      uploading: false,
-      uploadProgress: 0,
-      uploadError: '',
-      uploadSuccessMessage: '',
-      activeUploadId: '',
-      stagedUploadId: '',
-      stagedUploadName: '',
-      stagedUploadPreviewUrl: '',
-      stagedUploadType: '',
-      showPdfPassword: false,
-      previewExpanded: false,
-      previewHeight: 280,
-      autoRefreshEnabled: true,
-      lastUpdateTimestamp: '--',
-      autoRefreshTimerId: null,
-      handlePrintSubmit(event) {
-        if (!this.stagedUploadId || this.uploading || this.sendingPrint) {
-          event.preventDefault();
-          return;
-        }
-        this.sendingPrint = true;
-      },
-      handleFileSelection(event) {
-        this.uploadError = '';
-        this.uploadSuccessMessage = '';
-        if (!this.stagedUploadId) {
-          this.showPdfPassword = false;
-          if (this.$refs.pdfPasswordInput) {
-            this.$refs.pdfPasswordInput.value = '';
-          }
-        }
-      },
-      async uploadSelectedFile() {
-        if (!this.backendReady || this.uploading) return;
-        const fileInput = this.$refs.fileInput;
-        const file = fileInput && fileInput.files && fileInput.files.length ? fileInput.files[0] : null;
-        if (!file) {
-          this.uploadError = 'Seleziona un file prima del caricamento.';
-          return;
-        }
-
-        if (this.stagedUploadId) {
-          await this.deleteUploadedFile(false);
-        }
-
-        this.uploading = true;
-        this.uploadProgress = 0;
-        this.uploadError = '';
-        this.uploadSuccessMessage = '';
-
-        const uploadId = this.generateUploadId();
-        this.activeUploadId = uploadId;
-        const chunkSize = this.getChunkSize(file.size);
-        const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
-
-        try {
-          for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-            const start = chunkIndex * chunkSize;
-            const end = Math.min(start + chunkSize, file.size);
-            const payload = new FormData();
-            payload.append('upload_id', uploadId);
-            payload.append('chunk_index', String(chunkIndex));
-            payload.append('total_chunks', String(totalChunks));
-            payload.append('original_name', file.name);
-            payload.append('mime_type', file.type || 'application/octet-stream');
-            payload.append('chunk', file.slice(start, end), file.name);
-
-            const response = await fetch('/uploads/chunk', {
-              method: 'POST',
-              body: payload,
-            });
-
-            const data = await response.json();
-            if (!response.ok) {
-              const detail = data && data.detail ? data.detail : 'Errore durante il caricamento.';
-              throw new Error(detail);
-            }
-
-            this.uploadProgress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
-
-            if (data.completed) {
-              if (this.$refs.fileInput) {
-                this.$refs.fileInput.blur();
-              }
-              this.stagedUploadId = data.upload_id || uploadId;
-              this.stagedUploadName = data.filename || file.name;
-              this.stagedUploadPreviewUrl = data.preview_url || '';
-              this.stagedUploadType = data.file_type || '';
-              this.showPdfPassword = Boolean(data.pdf_requires_password);
-              this.previewExpanded = false;
-              this.previewHeight = 280;
-              if (this.$refs.pdfPasswordInput) {
-                this.$refs.pdfPasswordInput.value = '';
-              }
-              this.uploadSuccessMessage = 'File caricato sul server.';
-            }
-          }
-        } catch (error) {
-          this.uploadError = error && error.message ? error.message : 'Upload non riuscito.';
-          if (this.activeUploadId) {
-            try {
-              await fetch(`/uploads/${this.activeUploadId}`, { method: 'DELETE' });
-            } catch (_) {
-            }
-          }
-          await this.deleteUploadedFile(false);
-        } finally {
-          this.activeUploadId = '';
-          this.uploading = false;
-          if (!this.stagedUploadId) {
-            this.uploadProgress = 0;
-          }
-        }
-      },
-      async deleteUploadedFile(clearFileInput = true) {
-        const currentUploadId = this.stagedUploadId || this.activeUploadId;
-        if (!currentUploadId) {
-          if (clearFileInput && this.$refs.fileInput) this.$refs.fileInput.value = '';
-          return;
-        }
-        try {
-          await fetch(`/uploads/${currentUploadId}`, { method: 'DELETE' });
-        } catch (_) {
-        } finally {
-          this.stagedUploadId = '';
-          this.stagedUploadName = '';
-          this.stagedUploadPreviewUrl = '';
-          this.stagedUploadType = '';
-          this.uploadProgress = 0;
-          this.uploadSuccessMessage = '';
-          this.showPdfPassword = false;
-          this.previewExpanded = false;
-          this.previewHeight = 280;
-          if (this.$refs.pdfPasswordInput) {
-            this.$refs.pdfPasswordInput.value = '';
-          }
-          if (clearFileInput && this.$refs.fileInput) {
-            this.$refs.fileInput.value = '';
-          }
-        }
-      },
-      generateUploadId() {
-        if (window.crypto && window.crypto.randomUUID) {
-          return window.crypto.randomUUID().replace(/-/g, '');
-        }
-        return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      },
-      getChunkSize(fileSize) {
-        if (fileSize > 50 * 1024 * 1024) return 2 * 1024 * 1024;
-        if (fileSize > 5 * 1024 * 1024) return 1024 * 1024;
-        return 512 * 1024;
-      },
-      hasStagedPreview() {
-        return this.stagedUploadType === 'image' || this.stagedUploadType === 'pdf' || this.stagedUploadType === 'text';
-      },
-      togglePreview() {
-        this.previewExpanded = !this.previewExpanded;
-      },
-      startPreviewResize(event) {
-        if (!this.previewExpanded) return;
-        if (event.button !== undefined && event.button !== 0) return;
-        event.preventDefault();
-
-        const startY = event.clientY;
-        const startHeight = this.previewHeight;
-        const minHeight = 180;
-        const maxHeight = Math.max(320, Math.floor(window.innerHeight * 0.8));
-
-        const onPointerMove = (moveEvent) => {
-          const delta = moveEvent.clientY - startY;
-          const nextHeight = startHeight + delta;
-          this.previewHeight = Math.max(minHeight, Math.min(maxHeight, nextHeight));
-        };
-
-        const onPointerUp = () => {
-          window.removeEventListener('pointermove', onPointerMove);
-          window.removeEventListener('pointerup', onPointerUp);
-          window.removeEventListener('pointercancel', onPointerUp);
-        };
-
-        window.addEventListener('pointermove', onPointerMove);
-        window.addEventListener('pointerup', onPointerUp);
-        window.addEventListener('pointercancel', onPointerUp);
-      },
-      handleBeforePrintRequest(event) {
-        const detail = event && event.detail ? event.detail : null;
-        const sourceElement = detail && detail.elt ? detail.elt : null;
-        if (sourceElement && sourceElement.id === 'print-form') {
-          this.sendingPrint = true;
-        }
-      },
-      handleAfterPrintRequest(event) {
-        const detail = event && event.detail ? event.detail : null;
-        const sourceElement = detail && detail.elt ? detail.elt : null;
-        if (sourceElement && sourceElement.id === 'print-form') {
-          this.sendingPrint = false;
-          this.deleteUploadedFile();
-        }
-      },
-      setupPrinterMonitor() {
-        const panel = this.$refs.printerMonitorPanel;
-        if (!panel || !window.htmx) return;
-
-        document.body.addEventListener('htmx:afterSwap', (event) => {
-          if (event.target === panel) {
-            this.lastUpdateTimestamp = this.formatLastUpdate();
-          }
-        });
-
-        this.autoRefreshTimerId = window.setInterval(() => {
-          if (this.autoRefreshEnabled) {
-            window.htmx.trigger(panel, 'monitor-refresh');
-          }
-        }, 30000);
-      },
-      toggleAutoRefresh() {
-        this.autoRefreshEnabled = !this.autoRefreshEnabled;
-        if (this.autoRefreshEnabled && this.$refs.printerMonitorPanel && window.htmx) {
-          window.htmx.trigger(this.$refs.printerMonitorPanel, 'monitor-refresh');
-        }
-      },
-      formatLastUpdate() {
-        return new Date().toLocaleString('it-IT');
-      },
-    }"
+    x-data="webPrinterPage({{ 'true' if backend_ready else 'false' }})"
+    x-on:print-batch-accepted.window="clearUploadedFiles()"
     x-init="setupPrinterMonitor()"
   >
     <header class="hero">
       <p class="kicker">LOCAL PRINTING</p>
       <h1>WebPrinter</h1>
-      <p>Carica immagini, testo o PDF e inviali alla stampante locale con opzioni di stampa.</p>
+      <p>Carica più documenti e stampali con le stesse impostazioni.</p>
     </header>
 
     {% if backend_error %}
@@ -261,91 +36,131 @@
 
     <section class="card">
       <div class="form-grid upload-block">
-        <label x-show="!stagedUploadId">
-          <span>File</span>
+        <div class="upload-heading">
+          <h2>File da stampare</h2>
+          <span class="file-count" x-show="stagedFiles.length" x-text="stagedFiles.length + ' caricati'" x-cloak></span>
+        </div>
+
+        <label>
+          <span>Seleziona file</span>
           <input
             x-ref="fileInput"
             type="file"
-            accept=".pdf,.txt,image/*"
+            multiple
+            accept=".pdf,.txt,.png,.jpg,.jpeg,.gif,.bmp,.tif,.tiff,.webp"
             x-on:change="handleFileSelection($event)"
-            :disabled="uploading || sendingPrint || stagedUploadId !== ''"
+            :disabled="!backendReady || uploading || sendingPrint"
           >
         </label>
 
         <button
           type="button"
           class="btn"
-          x-on:click.prevent.stop="uploadSelectedFile()"
-          :disabled="uploading || sendingPrint || stagedUploadId !== ''"
+          x-on:click="uploadSelectedFiles()"
+          :disabled="!backendReady || !selectedCount || uploading || sendingPrint"
         >
           <span x-show="!uploading">Carica file sul server</span>
           <span x-show="uploading" x-cloak>Caricamento...</span>
         </button>
 
-        <div class="upload-meter" x-show="uploading || uploadProgress > 0" x-cloak>
+        <div class="upload-meter" x-show="uploading" x-cloak>
           <div class="track">
-            <div class="fill" :style="`width:${uploadProgress}%`"></div>
+            <div class="fill" :style="'width:' + uploadProgress + '%'"></div>
           </div>
-          <p>Upload: <strong x-text="`${uploadProgress}%`"></strong></p>
+          <p>Upload: <strong x-text="uploadProgress + '%'"></strong></p>
         </div>
 
-        <p class="field-note" x-show="uploadSuccessMessage" x-text="uploadSuccessMessage"></p>
-        <p class="field-note error-text" x-show="uploadError" x-text="uploadError"></p>
+        <p class="field-note" x-show="uploadSuccessMessage" x-text="uploadSuccessMessage" x-cloak></p>
+        <p class="field-note error-text" x-show="uploadError" x-text="uploadError" role="alert" x-cloak></p>
 
-        <div class="uploaded-file-card" x-show="stagedUploadId" x-cloak>
-          <div class="uploaded-file-header">
-            <p class="uploaded-file-name" x-text="stagedUploadName"></p>
-            <div class="uploaded-file-actions">
-              <button
-                type="button"
-                class="btn btn-secondary"
-                x-show="hasStagedPreview()"
-                x-cloak
-                x-on:click="togglePreview()"
-                :disabled="uploading || sendingPrint"
-                x-text="previewExpanded ? 'Nascondi anteprima' : 'Mostra anteprima'"
-              ></button>
-              <button
-                type="button"
-                class="btn btn-danger"
-                x-on:click="deleteUploadedFile()"
-                :disabled="uploading || sendingPrint"
-              >
-                Elimina file
-              </button>
-            </div>
-          </div>
+        <div class="uploaded-file-list" x-show="stagedFiles.length" x-cloak>
+          <template x-for="file in stagedFiles" :key="file.id">
+            <article class="uploaded-file-card">
+              <div class="uploaded-file-header">
+                <p class="uploaded-file-name" x-text="file.name"></p>
+                <div class="uploaded-file-actions">
+                  <button
+                    type="button"
+                    class="icon-button"
+                    x-show="hasPreview(file)"
+                    x-on:click="togglePreview(file)"
+                    :class="{ 'is-active': file.expanded }"
+                    :title="file.expanded ? 'Nascondi anteprima' : 'Mostra anteprima'"
+                    :aria-label="(file.expanded ? 'Nascondi anteprima di ' : 'Mostra anteprima di ') + file.name"
+                    :aria-pressed="file.expanded"
+                    :disabled="uploading || sendingPrint"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-button icon-danger"
+                    x-on:click="deleteUploadedFile(file)"
+                    :title="'Elimina ' + file.name"
+                    :aria-label="'Elimina ' + file.name"
+                    :disabled="uploading || sendingPrint"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 6h18M8 6V4h8v2M5 6l1 14h12l1-14M10 10v6M14 10v6"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
 
-          <div
-            class="preview-box"
-            x-show="previewExpanded && hasStagedPreview()"
-            x-cloak
-            :style="`height:${previewHeight}px`"
-          >
-            <div class="preview-content">
-              <img
-                x-show="stagedUploadType === 'image'"
+              <label class="file-password" x-show="file.requiresPassword" x-cloak>
+                <span>Password PDF per <span x-text="file.name"></span></span>
+                <input
+                  type="password"
+                  form="print-form"
+                  autocomplete="off"
+                  x-model="file.password"
+                  :required="file.requiresPassword"
+                  :disabled="uploading || sendingPrint"
+                  placeholder="Password del documento"
+                >
+              </label>
+
+              <div
+                class="preview-box"
+                x-show="file.expanded && hasPreview(file)"
+                :style="'height:' + file.height + 'px'"
                 x-cloak
-                :src="stagedUploadPreviewUrl"
-                alt="Anteprima file caricato"
-                class="preview-image"
               >
-              <iframe
-                x-show="stagedUploadType === 'pdf' || stagedUploadType === 'text'"
-                x-cloak
-                :src="stagedUploadPreviewUrl"
-                class="preview-frame"
-                title="Anteprima file caricato"
-              ></iframe>
-            </div>
-            <button
-              type="button"
-              class="preview-resizer"
-              x-on:pointerdown="startPreviewResize($event)"
-              aria-label="Ridimensiona anteprima"
-              :disabled="uploading || sendingPrint"
-            ></button>
-          </div>
+                <div class="preview-content">
+                  <div
+                    class="preview-sheet"
+                    :class="{ 'is-landscape': file.landscape, 'is-fill': imageMode === 'fill' }"
+                    x-show="file.type === 'image'"
+                    x-cloak
+                  >
+                    <img
+                      :src="file.previewUrl"
+                      alt="Anteprima immagine"
+                      class="preview-image"
+                      x-on:load="file.landscape = $event.target.naturalWidth > $event.target.naturalHeight"
+                    >
+                  </div>
+                  <iframe
+                    x-show="file.type === 'pdf' || file.type === 'text'"
+                    x-cloak
+                    :src="file.previewUrl"
+                    class="preview-frame"
+                    :title="'Anteprima ' + file.name"
+                  ></iframe>
+                </div>
+                <button
+                  type="button"
+                  class="preview-resizer"
+                  x-on:pointerdown="startPreviewResize($event, file)"
+                  aria-label="Ridimensiona anteprima"
+                  :disabled="uploading || sendingPrint"
+                ></button>
+              </div>
+            </article>
+          </template>
         </div>
       </div>
 
@@ -359,21 +174,10 @@
         x-on:htmx:before-request.window="handleBeforePrintRequest($event)"
         x-on:htmx:after-request.window="handleAfterPrintRequest($event)"
       >
-        <input type="hidden" name="uploaded_file_id" :value="stagedUploadId">
-
-        <label x-show="showPdfPassword" x-cloak>
-          <span>Password PDF (obbligatoria)</span>
-          <input
-            x-ref="pdfPasswordInput"
-            type="password"
-            name="pdf_password"
-            autocomplete="off"
-            placeholder="Inserisci la password del PDF protetto"
-            x-bind:disabled="!backendReady || !showPdfPassword || !stagedUploadId"
-            x-bind:required="showPdfPassword"
-          >
-          <small class="field-note">Viene usata solo per decriptare il PDF prima della stampa.</small>
-        </label>
+        <template x-for="file in stagedFiles" :key="'input-' + file.id">
+          <input type="hidden" name="uploaded_file_id" :value="file.id">
+        </template>
+        <input type="hidden" name="pdf_passwords" :value="pdfPasswords()">
 
         {% if printers|length == 1 %}
           <input id="printer-select" type="hidden" name="printer" value="{{ printers[0] }}">
@@ -417,13 +221,26 @@
           <span>Fronte/retro</span>
         </label>
 
+        <fieldset x-show="stagedFiles.some(file => file.type === 'image')" x-cloak>
+          <legend>Adattamento immagini</legend>
+          <label class="inline-option">
+            <input type="radio" name="image_mode" value="fit" x-model="imageMode" {% if not backend_ready %}disabled{% endif %}>
+            <span>Adatta</span>
+          </label>
+          <label class="inline-option">
+            <input type="radio" name="image_mode" value="fill" x-model="imageMode" {% if not backend_ready %}disabled{% endif %}>
+            <span>Riempi</span>
+          </label>
+          <small class="field-note">Adatta conserva l'intera immagine. Riempi può ritagliare i bordi.</small>
+        </fieldset>
+
         <button
           type="submit"
           class="btn"
-          :disabled="!backendReady || !stagedUploadId || uploading || sendingPrint"
+          :disabled="!backendReady || !stagedFiles.length || uploading || sendingPrint || stagedFiles.some(file => file.requiresPassword && !file.password)"
           {% if not printers %}disabled{% endif %}
         >
-          Invia in stampa
+          <span x-text="stagedFiles.length > 1 ? 'Stampa ' + stagedFiles.length + ' file' : 'Invia in stampa'"></span>
         </button>
       </form>
     </section>

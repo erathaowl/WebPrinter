@@ -6,13 +6,14 @@ Applicazione web Python basata su FastAPI per caricare documenti e inviarli alle
 
 ## Funzionalità
 
-- Caricamento di un file alla volta, a blocchi, con indicatore di avanzamento.
+- Caricamento contemporaneo di più file (fino a tre alla volta) a blocchi, con avanzamento complessivo, anteprima ed eliminazione singola. Ogni lotto supporta fino a 50 file.
 - Formati accettati: `.pdf`, `.txt`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.tif`, `.tiff`, `.webp`. La stampa effettiva dipende dai formati supportati dal backend e dai filtri installati.
 - Anteprima dopo il caricamento, espandibile e ridimensionabile, per immagini, PDF e testo; la visualizzazione dipende dal supporto del browser.
 - Eliminazione del file caricato prima dell'invio in stampa.
 - Scelta della stampante quando ne è disponibile più di una.
 - Opzioni di stampa: bianco/nero (predefinito) o colori, da 1 a 99 copie (predefinito: 1), fronte/retro sul lato lungo (disattivato per impostazione predefinita).
-- Rilevamento dei PDF cifrati e richiesta della password per decriptarli prima della stampa.
+- Rilevamento dei PDF cifrati e password separata per ciascun documento protetto.
+- Impostazioni di stampa comuni all'intero lotto. Per le immagini sono disponibili **Adatta** (predefinito, conserva tutto) e **Riempi** (ritaglio centrale).
 - Elaborazione in background con stato, avanzamento, dettagli degli errori e ID di coda CUPS quando disponibile.
 - Monitor della stampante con stato, numero di job in coda, segnalazioni e livelli toner quando disponibili.
 
@@ -70,11 +71,11 @@ Quindi tenta di abilitare la coda, accettare i job e impostarla come predefinita
 
 ## Utilizzo
 
-1. Seleziona un file e premi **Carica file sul server**.
-2. Al termine del caricamento, controlla l'anteprima se necessario. Puoi eliminare il file prima di stamparlo.
-3. Se il PDF è cifrato, inserisci la password nel campo che compare.
-4. Scegli stampante e opzioni, quindi premi **Invia in stampa**.
-5. Consulta il pannello del job per l'esito e il monitor per lo stato della stampante.
+1. Seleziona uno o più file e premi **Carica file sul server**.
+2. Controlla le anteprime, elimina i singoli file se necessario oppure aggiungine altri.
+3. Inserisci la password per ciascun PDF protetto.
+4. Scegli la stampante e le impostazioni comuni, inclusa **Adatta / Riempi** per le immagini, quindi invia il lotto in stampa.
+5. Controlla l'esito di ciascun job nel pannello di stato.
 
 Lo stato del job viene aggiornato ogni **2 secondi**, fino al completamento o all'errore. Il monitor viene caricato all'apertura della pagina e al cambio stampante, poi aggiornato ogni **30 secondi**; il pulsante accanto alla data dell'ultimo aggiornamento consente di disattivare o riattivare il refresh automatico.
 
@@ -82,7 +83,8 @@ Lo stato del job viene aggiornato ogni **2 secondi**, fino al completamento o al
 
 - **“Completato” indica che il backend ha terminato l'invio**, non che il documento sia stato fisicamente stampato. CUPS controlla la presenza del job nella coda locale per circa 12 secondi; SumatraPDF segnala l'esito del proprio processo.
 - L'avanzamento di stampa rappresenta le fasi dell'invio, non il numero di pagine stampate.
-- I file sono salvati in `uploads/`, creata automaticamente. Dopo l'elaborazione del job l'applicazione tenta di eliminarli anche in caso di errore; i PDF cifrati vengono sostituiti da una copia decriptata temporanea.
+- I file sono salvati in `uploads/`, creata nella directory di lavoro. Al termine dell'elaborazione dei job vengono eliminati i sorgenti e i file temporanei, inclusi i PDF decriptati.
+- L'adattamento si applica solo alle immagini: vengono convertite in PDF A4 temporanei, con orientamento verticale/orizzontale automatico. **Adatta** lascia un piccolo margine bianco; **Riempi** ritaglia al centro. La stampa senza bordi fisici dipende dalla stampante e dal driver. Per i GIF animati si stampa il primo fotogramma; per i TIFF multipagina si stampano tutte le pagine.
 - Gli upload abbandonati o interrotti non hanno una scadenza né una pulizia periodica automatica. Possono rimanere su disco, specialmente dopo un arresto del processo.
 - Job e metadati degli upload sono conservati solo in memoria. Usa un solo processo Uvicorn, senza `--workers` multipli: i registri non sono condivisi. Il pool in background ha due thread di elaborazione.
 - Non sono implementati autenticazione, autorizzazione o un limite complessivo esplicito alla dimensione dei file. Il server accetta al massimo 5.000 blocchi per upload; l'interfaccia usa blocchi da 512 KiB, 1 MiB o 2 MiB in base alla dimensione del file.

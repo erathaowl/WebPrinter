@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import uuid
@@ -23,6 +24,7 @@ from print_backend import (
     PrintOptions,
     PrinterStatusSnapshot,
     build_backend,
+    prepare_image_pdf,
 )
 
 
@@ -43,6 +45,8 @@ ALLOWED_EXTENSIONS = {
     ".tiff",
     ".webp",
 }
+MAX_BATCH_FILES = 50
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tif', '.tiff', '.webp'}
 UPLOAD_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{8,64}$")
 TERMINAL_STATUSES = {"completed", "failed"}
 STATUS_LABELS = {
@@ -71,6 +75,7 @@ class PrintJob:
     color_mode: str
     copies: int
     duplex: bool
+    image_mode: str = "fit"
     status: str = "queued"
     progress: int = 5
     message: str = "File ricevuto, in coda."
@@ -158,6 +163,20 @@ class UploadRegistry:
             entry = self._uploads.pop(upload_id, None)
             return replace(entry) if entry else None
 
+    def pop_many(self, upload_ids: list[str]) -> list[UploadedFileEntry]:
+        """Atomically consume a complete batch of staged files."""
+        with self._lock:
+            entries = [self._uploads.get(upload_id) for upload_id in upload_ids]
+            if any(
+                entry is None or not entry.completed or not entry.stored_path
+                or not entry.stored_path.exists()
+                for entry in entries
+            ):
+                raise ValueError("Uno o piu file non sono piu disponibili.")
+            for upload_id in upload_ids:
+                del self._uploads[upload_id]
+            return [replace(entry) for entry in entries]
+
 
 app = FastAPI(title="WebPrinter")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -231,68 +250,90 @@ def printer_status(request: Request, printer: Optional[str] = None) -> HTMLRespo
 @app.post("/jobs", response_class=HTMLResponse)
 def create_job(
     request: Request,
-    uploaded_file_id: str = Form(...),
+    uploaded_file_id: list[str] = Form(...),
     printer: str = Form(...),
     color_mode: str = Form("bw"),
     copies: int = Form(1),
     duplex: Optional[str] = Form(None),
-    pdf_password: Optional[str] = Form(None),
+    image_mode: str = Form("fit"),
+    pdf_passwords: str = Form("{}"),
 ) -> HTMLResponse:
-    """Queue a print job using a previously uploaded file."""
+    """Validate and queue an entire batch with shared print settings."""
     if printer_backend is None:
-        error_job = _error_job(
-            filename="sconosciuto",
-            message="Backend di stampa non disponibile.",
-            error=backend_boot_error
-            or "Configura CUPS o SumatraPDF e riavvia l'applicazione.",
+        return _render_job(
+            request,
+            _error_job("sconosciuto", "Backend di stampa non disponibile.", backend_boot_error),
         )
-        return _render_job(request, error_job)
 
-    prepared_path: Optional[Path] = None
-    upload_entry: Optional[UploadedFileEntry] = None
+    prepared_paths: list[tuple[Path, Path]] = []
+    consumed = False
     try:
-        upload_entry = _consume_uploaded_file(uploaded_file_id)
-        filename = upload_entry.filename
+        if not uploaded_file_id or len(uploaded_file_id) > MAX_BATCH_FILES:
+            raise ValueError(f"Seleziona da 1 a {MAX_BATCH_FILES} file.")
+        ids = [_validate_upload_id(upload_id) for upload_id in uploaded_file_id]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Sono presenti file duplicati nella richiesta.")
+
         validated_color = _validate_color_mode(color_mode)
         validated_copies = _validate_copies(copies)
-        validated_duplex = _as_bool(duplex)
-
-        available_printers = printer_backend.list_printers()
-        if printer not in available_printers:
+        validated_image_mode = _validate_image_mode(image_mode)
+        if printer not in printer_backend.list_printers():
             raise ValueError("Stampante selezionata non valida.")
 
-        job_id = uuid.uuid4().hex
-        prepared_path = _prepare_pdf_for_print(upload_entry.stored_path or Path(), pdf_password)
-        queued_message = "File caricato, in attesa di stampa."
-        if upload_entry.stored_path and prepared_path != upload_entry.stored_path:
-            queued_message = "PDF protetto decriptato, in attesa di stampa."
-        job = PrintJob(
-            id=job_id,
-            filename=filename,
-            stored_path=prepared_path,
-            printer=printer,
-            color_mode=validated_color,
-            copies=validated_copies,
-            duplex=validated_duplex,
-            status="queued",
-            progress=8,
-            message=queued_message,
-        )
-        jobs.create(job)
-        executor.submit(process_print_job, job.id)
-        return _render_job(request, job)
+        passwords = json.loads(pdf_passwords or "{}")
+        if not isinstance(passwords, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in passwords.items()
+        ):
+            raise ValueError("Password PDF non valide.")
 
-    except (ValueError, PrintBackendError) as exc:
-        if prepared_path and prepared_path.exists() and upload_entry and prepared_path != upload_entry.stored_path:
-            prepared_path.unlink(missing_ok=True)
-        if upload_entry and upload_entry.stored_path and upload_entry.stored_path.exists():
-            upload_entry.stored_path.unlink(missing_ok=True)
-        error_job = _error_job(
-            filename=upload_entry.filename if upload_entry else "sconosciuto",
-            message="Richiesta non valida.",
-            error=str(exc),
+        try:
+            entries = [_require_completed_upload(upload_id) for upload_id in ids]
+        except HTTPException as exc:
+            raise ValueError(str(exc.detail)) from exc
+
+        for entry in entries:
+            source = entry.stored_path
+            assert source is not None
+            prepared = _prepare_pdf_for_print(source, passwords.get(entry.id))
+            prepared_paths.append((source, prepared))
+
+        uploads.pop_many(ids)
+        consumed = True
+
+        queued_jobs = []
+        for entry, (source, prepared) in zip(entries, prepared_paths):
+            if prepared != source:
+                source.unlink(missing_ok=True)
+            job = PrintJob(
+                id=uuid.uuid4().hex,
+                filename=entry.filename,
+                stored_path=prepared,
+                printer=printer,
+                color_mode=validated_color,
+                copies=validated_copies,
+                duplex=_as_bool(duplex),
+                image_mode=validated_image_mode,
+                status="queued",
+                progress=8,
+                message="File in attesa di stampa.",
+            )
+            jobs.create(job)
+            executor.submit(process_print_job, job.id)
+            queued_jobs.append(job)
+
+        html = "".join(_render_job(request, job).body.decode("utf-8") for job in queued_jobs)
+        return HTMLResponse(html, headers={"HX-Trigger": "print-batch-accepted"})
+
+    except (ValueError, PrintBackendError, HTTPException, json.JSONDecodeError) as exc:
+        if not consumed:
+            for source, prepared in prepared_paths:
+                if prepared != source:
+                    _cleanup_file_paths(prepared)
+        return _render_job(
+            request,
+            _error_job("Lotto di stampa", "Richiesta non valida.", str(exc)),
         )
-        return _render_job(request, error_job)
 
 
 @app.post("/uploads/chunk")
@@ -441,7 +482,13 @@ def process_print_job(job_id: str) -> None:
             message=message,
         )
 
+    image_pdf: Optional[Path] = None
     try:
+        source_path = snapshot.stored_path or Path()
+        if source_path.suffix.lower() in IMAGE_EXTENSIONS:
+            image_pdf = prepare_image_pdf(source_path, snapshot.image_mode)
+            source_path = image_pdf
+
         options = PrintOptions(
             printer=snapshot.printer,
             copies=snapshot.copies,
@@ -449,7 +496,7 @@ def process_print_job(job_id: str) -> None:
             duplex=snapshot.duplex,
         )
         printer_job_id = printer_backend.print_file(
-            file_path=snapshot.stored_path or Path(),
+            file_path=source_path,
             options=options,
             progress=progress,
         )
@@ -470,6 +517,7 @@ def process_print_job(job_id: str) -> None:
             error=str(exc),
         )
     finally:
+        _cleanup_file_paths(image_pdf)
         current = jobs.get(job_id)
         if current and current.stored_path and current.stored_path.exists():
             try:
@@ -549,6 +597,14 @@ def _validate_copies(copies: int) -> int:
     return copies
 
 
+def _validate_image_mode(image_mode: str) -> str:
+    """Normalize the image layout preference."""
+    mode = (image_mode or "").lower()
+    if mode not in {"fit", "fill"}:
+        raise ValueError("Modalita di adattamento immagine non valida.")
+    return mode
+
+
 def _store_uploaded_file(file: UploadFile, original_name: str, job_id: str) -> Path:
     """Store the uploaded file on disk using a sanitized unique name."""
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", original_name)
@@ -592,7 +648,6 @@ def _prepare_pdf_for_print(file_path: Path, pdf_password: Optional[str]) -> Path
         output_path.unlink(missing_ok=True)
         raise ValueError(f"Errore durante la preparazione del PDF: {exc}") from exc
 
-    file_path.unlink(missing_ok=True)
     return output_path
 
 

@@ -596,6 +596,136 @@ fieldset {
   overflow-wrap: anywhere;
 }
 
+
+.upload-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.upload-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.file-count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.uploaded-file-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.uploaded-file-header {
+  margin-bottom: 0;
+}
+
+.uploaded-file-actions {
+  flex-shrink: 0;
+  gap: 0.25rem;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.icon-button svg {
+  width: 19px;
+  height: 19px;
+}
+
+.icon-button:hover,
+.icon-button.is-active {
+  color: var(--accent);
+  background: #eaf2ff;
+}
+
+.icon-button.icon-danger:hover {
+  color: var(--err);
+  background: #fff0f2;
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.file-password {
+  display: block;
+  margin-top: 0.7rem;
+}
+
+.file-password span span {
+  display: inline;
+  margin: 0;
+  font-size: inherit;
+}
+
+.preview-box {
+  margin-top: 0.65rem;
+}
+
+.preview-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-sheet {
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 210 / 297;
+  padding: 3%;
+  background: white;
+  border: 1px solid var(--border);
+}
+
+.preview-sheet.is-landscape {
+  aspect-ratio: 297 / 210;
+}
+
+.preview-sheet.is-fill {
+  padding: 0;
+}
+
+.preview-sheet .preview-image {
+  object-fit: contain;
+  background: white;
+}
+
+.preview-sheet.is-fill .preview-image {
+  object-fit: cover;
+}
+
+.preview-frame {
+  flex: 1 1 auto;
+}
+
+.job-area {
+  display: grid;
+  gap: 0.7rem;
+}
+
 [x-cloak] {
   display: none !important;
 }

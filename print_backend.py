@@ -13,7 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Protocol
 
-from reportlab.lib.pagesizes import A4
+from PIL import Image, ImageOps
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 
@@ -32,6 +34,64 @@ class PrintOptions:
     copies: int = 1
     color: bool = False
     duplex: bool = False
+
+
+def prepare_image_pdf(image_path: Path, mode: str = "fit") -> Path:
+    """Lay out image pages on A4, preserving proportions or center-cropping."""
+    if mode not in {"fit", "fill"}:
+        raise PrintBackendError("Modalita immagine non valida.")
+
+    handle = tempfile.NamedTemporaryFile(
+        delete=False, suffix=".pdf", prefix="webprinter_image_"
+    )
+    handle.close()
+    output_path = Path(handle.name)
+
+    try:
+        document = canvas.Canvas(str(output_path), pagesize=A4)
+        with Image.open(image_path) as source:
+            # Animated GIFs are represented by their first frame.
+            # Multi-page TIFF files retain all their pages.
+            frame_count = 1 if source.format == "GIF" else source.n_frames
+            for frame_index in range(frame_count):
+                source.seek(frame_index)
+                oriented = ImageOps.exif_transpose(source)
+                rgba = oriented.convert("RGBA")
+                image = Image.new("RGB", rgba.size, "white")
+                image.paste(rgba, mask=rgba.getchannel("A"))
+
+                page_width, page_height = (
+                    landscape(A4) if image.width > image.height else A4
+                )
+                document.setPageSize((page_width, page_height))
+                margin = 18 if mode == "fit" else 0
+                usable_width = page_width - 2 * margin
+                usable_height = page_height - 2 * margin
+                scale = (
+                    min(usable_width / image.width, usable_height / image.height)
+                    if mode == "fit"
+                    else max(usable_width / image.width, usable_height / image.height)
+                )
+                width = image.width * scale
+                height = image.height * scale
+                x = (page_width - width) / 2
+                y = (page_height - height) / 2
+
+                if mode == "fill":
+                    document.saveState()
+                    boundary = document.beginPath()
+                    boundary.rect(0, 0, page_width, page_height)
+                    document.clipPath(boundary, stroke=0, fill=0)
+                document.drawImage(ImageReader(image), x, y, width, height)
+                if mode == "fill":
+                    document.restoreState()
+                document.showPage()
+        document.save()
+    except Exception as exc:
+        output_path.unlink(missing_ok=True)
+        raise PrintBackendError(f"Impossibile preparare l'immagine: {exc}") from exc
+
+    return output_path
 
 
 @dataclass(frozen=True)
