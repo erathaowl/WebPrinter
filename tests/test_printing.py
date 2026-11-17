@@ -205,3 +205,139 @@ def test_multiframe_tiff_and_gif(tmp_path):
 def test_rejects_unknown_image_layout(tmp_path):
     with pytest.raises(PrintBackendError):
         prepare_image_pdf(tmp_path / "unused.png", "stretch")
+
+
+def test_chunked_upload_preview_and_deletion(service):
+    client, _, _ = service
+    upload_id = "uploadchunk00001"
+    payload = {
+        "upload_id": upload_id,
+        "total_chunks": "2",
+        "original_name": "notes.txt",
+        "mime_type": "text/plain",
+    }
+    first = client.post(
+        "/uploads/chunk",
+        data={**payload, "chunk_index": "0"},
+        files={"chunk": ("notes.txt", b"hello ")},
+    )
+    assert first.status_code == 200
+    assert first.json()["completed"] is False
+
+    out_of_order = client.post(
+        "/uploads/chunk",
+        data={**payload, "chunk_index": "2"},
+        files={"chunk": ("notes.txt", b"ignored")},
+    )
+    assert out_of_order.status_code == 409
+
+    final = client.post(
+        "/uploads/chunk",
+        data={**payload, "chunk_index": "1"},
+        files={"chunk": ("notes.txt", b"world")},
+    )
+    assert final.status_code == 200
+    assert final.json()["completed"] is True
+    preview = client.get(final.json()["preview_url"])
+    assert preview.status_code == 200
+    assert preview.content == b"hello world"
+
+    entry = application.uploads.get(upload_id)
+    assert entry.stored_path.exists()
+    deleted = client.delete(f"/uploads/{upload_id}")
+    assert deleted.status_code == 200
+    assert not entry.stored_path.exists()
+    assert client.get(final.json()["preview_url"]).status_code == 404
+
+
+def test_missing_batch_file_preserves_remaining_uploads(service):
+    client, _, queue = service
+    upload(client, "keep.txt", b"keep", "uploadbatch00001")
+    upload(client, "remove.txt", b"remove", "uploadbatch00002")
+    assert client.delete("/uploads/uploadbatch00002").status_code == 200
+
+    response = submit(client, ["uploadbatch00001", "uploadbatch00002"])
+
+    assert response.status_code == 200
+    assert "HX-Trigger" not in response.headers
+    assert not queue.job_ids
+    assert application.uploads.get("uploadbatch00001").completed
+    assert application.uploads.get("uploadbatch00001").stored_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"copies": "0"}, "copie"),
+        ({"color_mode": "unexpected"}, "colore"),
+        ({"pdf_passwords": "not-json"}, "Expecting value"),
+    ],
+)
+def test_invalid_batch_options_preserve_uploads(service, options, message):
+    client, _, queue = service
+    upload(client, "keep.txt", b"hello", "uploadoption00001")
+
+    response = submit(client, ["uploadoption00001"], **options)
+
+    assert response.status_code == 200
+    assert message.lower() in response.text.lower()
+    assert "HX-Trigger" not in response.headers
+    assert not queue.job_ids
+    assert application.uploads.get("uploadoption00001").completed
+
+
+def test_batch_limit_prevents_queueing(service):
+    client, _, queue = service
+    response = submit(client, [f"uploadlimit{i:05d}" for i in range(51)])
+
+    assert response.status_code == 200
+    assert "50 file" in response.text
+    assert not queue.job_ids
+
+
+def test_failed_print_cleans_source_and_generated_pdf(service, monkeypatch):
+    client, backend, queue = service
+    upload(client, "photo.png", png_bytes(), "uploaderror00001")
+    response = submit(client, ["uploaderror00001"])
+    assert response.headers["HX-Trigger"] == "print-batch-accepted"
+    job = application.jobs.get(queue.job_ids[0])
+    assert job.image_mode == "fit"
+    source = job.stored_path
+
+    generated = []
+    actual_prepare = application.prepare_image_pdf
+
+    def track_pdf(file_path, mode):
+        result = actual_prepare(file_path, mode)
+        generated.append(result)
+        return result
+
+    def fail_print(file_path, options, progress):
+        raise PrintBackendError("Simulated spooler error")
+
+    monkeypatch.setattr(application, "prepare_image_pdf", track_pdf)
+    monkeypatch.setattr(backend, "print_file", fail_print)
+
+    application.process_print_job(job.id)
+
+    result = application.jobs.get(job.id)
+    assert result.status == "failed"
+    assert "Simulated spooler error" in result.error
+    assert not source.exists()
+    assert len(generated) == 1
+    assert not generated[0].exists()
+
+
+def test_corrupt_image_fails_safely_without_temporary_files(service, monkeypatch):
+    client, backend, queue = service
+    upload(client, "broken.png", b"invalid image data", "uploadbroken0001")
+    response = submit(client, ["uploadbroken0001"])
+    assert response.headers["HX-Trigger"] == "print-batch-accepted"
+    job = application.jobs.get(queue.job_ids[0])
+    source = job.stored_path
+
+    application.process_print_job(job.id)
+
+    assert application.jobs.get(job.id).status == "failed"
+    assert not source.exists()
+    assert not backend.printed
