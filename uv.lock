@@ -881,6 +881,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
+    { name = "pillow" },
     { name = "pypdf" },
     { name = "python-multipart" },
     { name = "reportlab" },
@@ -891,6 +892,7 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "pillow", specifier = ">=10.0" },
     { name = "pypdf", specifier = ">=6.7.2" },
     { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "reportlab", specifier = ">=4.4.10" },
