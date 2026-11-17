@@ -1,0 +1,30 @@
+name: Publish v1.0.0
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/publish-v1.0.0.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Tag the verified commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/v1.0.0" \
+            -f "sha=8c1c2790a6ac55960d2e99550a80107fda750ca9"
+
+      - name: Publish release assets and multi-platform image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref v1.0.0 --repo "$GITHUB_REPOSITORY"
