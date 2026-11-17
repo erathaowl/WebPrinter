@@ -408,7 +408,7 @@ def test_printer_monitor_reports_configuration_failure_and_recovers(
     )
     monkeypatch.setattr(application, "PRINTER_STATUS_FILE", status_file)
     monkeypatch.setenv("PRINTER_NAME", "TestPrinter")
-    monkeypatch.setattr(backend, "default_printer", lambda: None)
+    monkeypatch.setattr(backend, "default_printer", lambda: None, raising=False)
     monkeypatch.setattr(backend, "list_printers", lambda: [])
 
     unavailable = client.get("/printer-status")
