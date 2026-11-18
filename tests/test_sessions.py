@@ -113,7 +113,8 @@ def test_cookie_is_httponly_and_invalid_cookie_gets_replaced(browser_service):
     response = invalid.get("/uploads")
     assert response.status_code == 200
     assert "set-cookie" in response.headers
-    assert len(invalid.cookies.get(application.COOKIE_NAME)) == 43
+    token = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert len(token) == 43 and token != "invalid"
 
 
 def test_expired_file_and_abandoned_chunk_are_cleaned(tmp_path):
