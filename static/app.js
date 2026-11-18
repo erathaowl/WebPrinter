@@ -13,6 +13,27 @@ function webPrinterPage(backendReady) {
     lastUpdateTimestamp: '--',
     autoRefreshTimerId: null,
 
+    async loadStagedFiles() {
+      try {
+        const response = await fetch('/uploads', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Impossibile recuperare i file.');
+        const data = await response.json();
+        this.stagedFiles = data.files.map((file) => ({
+          id: file.id,
+          name: file.name,
+          previewUrl: file.preview_url,
+          type: file.type,
+          requiresPassword: file.requires_password,
+          password: '',
+          expanded: false,
+          height: 280,
+          landscape: false,
+        }));
+      } catch (error) {
+        this.uploadError = error.message || 'Errore durante il recupero dei file.';
+      }
+    },
+
     handleFileSelection(event) {
       this.selectedCount = event.target.files.length;
       this.uploadError = '';

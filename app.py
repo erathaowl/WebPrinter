@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import re
+import secrets
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from mimetypes import guess_type
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock, Thread
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -19,6 +22,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader, PdfWriter
+
+from upload_storage import UPLOAD_DIR, UploadRegistry, UploadedFileEntry
 
 from print_backend import (
     PrintBackendError,
@@ -30,7 +35,6 @@ from print_backend import (
 
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = Path.cwd() / "uploads"
 PRINTER_STATUS_FILE = Path(os.getenv("WEBPRINTER_PRINTER_STATUS_FILE", "/run/webprinter/printer-error"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -78,26 +82,12 @@ class PrintJob:
     copies: int
     duplex: bool
     image_mode: str = "fit"
+    session_id: str = ""
     status: str = "queued"
     progress: int = 5
     message: str = "File ricevuto, in coda."
     error: Optional[str] = None
     printer_job_id: Optional[str] = None
-
-
-@dataclass
-class UploadedFileEntry:
-    """Represents a staged file upload before print submission."""
-
-    id: str
-    filename: str
-    mime_type: str
-    temp_path: Path
-    total_chunks: int
-    next_chunk_index: int = 0
-    uploaded_bytes: int = 0
-    stored_path: Optional[Path] = None
-    completed: bool = False
 
 
 class JobRegistry:
@@ -130,68 +120,67 @@ class JobRegistry:
             return replace(job)
 
 
-class UploadRegistry:
-    """Thread-safe in-memory storage for chunked file uploads."""
-
-    def __init__(self) -> None:
-        """Initialize upload map and lock."""
-        self._uploads: dict[str, UploadedFileEntry] = {}
-        self._lock = Lock()
-
-    def get(self, upload_id: str) -> Optional[UploadedFileEntry]:
-        """Return a snapshot copy of an upload entry, if available."""
-        with self._lock:
-            entry = self._uploads.get(upload_id)
-            return replace(entry) if entry else None
-
-    def create_or_replace(self, entry: UploadedFileEntry) -> None:
-        """Create or replace an upload entry."""
-        with self._lock:
-            self._uploads[entry.id] = entry
-
-    def update(self, upload_id: str, **changes: object) -> Optional[UploadedFileEntry]:
-        """Apply field updates to an upload and return a snapshot."""
-        with self._lock:
-            entry = self._uploads.get(upload_id)
-            if not entry:
-                return None
-            for key, value in changes.items():
-                setattr(entry, key, value)
-            return replace(entry)
-
-    def pop(self, upload_id: str) -> Optional[UploadedFileEntry]:
-        """Remove and return an upload entry."""
-        with self._lock:
-            entry = self._uploads.pop(upload_id, None)
-            return replace(entry) if entry else None
-
-    def pop_many(self, upload_ids: list[str]) -> list[UploadedFileEntry]:
-        """Atomically consume a complete batch of staged files."""
-        with self._lock:
-            entries = [self._uploads.get(upload_id) for upload_id in upload_ids]
-            if any(
-                entry is None or not entry.completed or not entry.stored_path
-                or not entry.stored_path.exists()
-                for entry in entries
-            ):
-                raise ValueError("Uno o piu file non sono piu disponibili.")
-            for upload_id in upload_ids:
-                del self._uploads[upload_id]
-            return [replace(entry) for entry in entries]
-
-
 app = FastAPI(title="WebPrinter")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
+COOKIE_NAME = "webprinter_session"
+COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+logger = logging.getLogger("webprinter")
 jobs = JobRegistry()
 uploads = UploadRegistry()
 executor = ThreadPoolExecutor(max_workers=2)
 printer_backend, backend_boot_error = build_backend()
+cleanup_stop = Event()
+cleanup_thread: Optional[Thread] = None
+
+
+@app.middleware("http")
+async def session_cookie(request: Request, call_next):
+    """Associate each browser with an unguessable, HttpOnly session cookie."""
+    token = request.cookies.get(COOKIE_NAME, "")
+    created = not re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
+    if created:
+        token = secrets.token_urlsafe(32)
+    request.state.session_id = hashlib.sha256(token.encode("ascii")).hexdigest()
+    response = await call_next(request)
+    if created:
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            max_age=COOKIE_MAX_AGE,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="lax",
+            path="/",
+        )
+    return response
+
+
+def cleanup_loop() -> None:
+    """Discard abandoned uploads periodically, even without active browsers."""
+    while not cleanup_stop.wait(300):
+        try:
+            uploads.cleanup_expired()
+        except Exception:
+            logger.exception("Upload cleanup failed")
+
+
+@app.on_event("startup")
+def start_upload_cleanup() -> None:
+    global cleanup_thread
+    uploads.cleanup_expired()
+    cleanup_stop.clear()
+    cleanup_thread = Thread(target=cleanup_loop, name="upload-cleanup", daemon=True)
+    cleanup_thread.start()
+
 
 
 @app.on_event("shutdown")
 def shutdown_executor() -> None:
     """Stop the background executor during application shutdown."""
+    cleanup_stop.set()
+    if cleanup_thread:
+        cleanup_thread.join(timeout=1)
     executor.shutdown(wait=False, cancel_futures=True)
 
 
@@ -299,7 +288,7 @@ def create_job(
             raise ValueError("Password PDF non valide.")
 
         try:
-            entries = [_require_completed_upload(upload_id) for upload_id in ids]
+            entries = [_require_completed_upload(upload_id, request.state.session_id) for upload_id in ids]
         except HTTPException as exc:
             raise ValueError(str(exc.detail)) from exc
 
@@ -309,12 +298,13 @@ def create_job(
             prepared = _prepare_pdf_for_print(source, passwords.get(entry.id))
             prepared_paths.append((source, prepared))
 
-        uploads.pop_many(ids)
+        uploads.pop_many(ids, request.state.session_id)
         consumed = True
 
         queued_jobs = []
         for entry, (source, prepared) in zip(entries, prepared_paths):
             if prepared != source:
+                uploads.transfer_path(source, prepared)
                 source.unlink(missing_ok=True)
             job = PrintJob(
                 id=uuid.uuid4().hex,
@@ -325,6 +315,7 @@ def create_job(
                 copies=validated_copies,
                 duplex=_as_bool(duplex),
                 image_mode=validated_image_mode,
+                session_id=request.state.session_id,
                 status="queued",
                 progress=8,
                 message="File in attesa di stampa.",
@@ -347,8 +338,26 @@ def create_job(
         )
 
 
+@app.get("/uploads")
+def list_uploaded_files(request: Request) -> JSONResponse:
+    """Restore the current session's completed uploads after a page refresh."""
+    files = [
+        {
+            "id": entry.id,
+            "name": entry.filename,
+            "preview_url": f"/uploads/{entry.id}/preview",
+            "type": _preview_kind(entry.filename),
+            "requires_password": _pdf_requires_password(entry.stored_path)
+            if entry.filename.lower().endswith(".pdf") else False,
+        }
+        for entry in uploads.list_for_session(request.state.session_id)
+    ]
+    return JSONResponse({"files": files}, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/uploads/chunk")
 async def upload_chunk(
+    request: Request,
     upload_id: str = Form(...),
     chunk_index: int = Form(...),
     total_chunks: int = Form(...),
@@ -364,17 +373,26 @@ async def upload_chunk(
         raise HTTPException(status_code=400, detail="Indice chunk non valido.")
 
     part_path = UPLOAD_DIR / f"{normalized_upload_id}.part"
-    entry = uploads.get(normalized_upload_id)
+    session_id = request.state.session_id
+    entry = uploads.get(normalized_upload_id, session_id)
     if chunk_index == 0:
+        if uploads.get(normalized_upload_id) and entry is None:
+            raise HTTPException(status_code=409, detail="Upload ID gia in uso.")
+        if entry:
+            _cleanup_file_paths(entry.temp_path, entry.stored_path)
         _cleanup_file_paths(part_path)
         fresh_entry = UploadedFileEntry(
             id=normalized_upload_id,
+            session_id=session_id,
             filename=filename,
             mime_type=mime_type or "application/octet-stream",
             temp_path=part_path,
             total_chunks=total_chunks,
         )
-        uploads.create_or_replace(fresh_entry)
+        try:
+            uploads.create_or_replace(fresh_entry)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         entry = fresh_entry
 
     if entry is None:
@@ -403,6 +421,7 @@ async def upload_chunk(
         pdf_requires_password = _pdf_requires_password(final_path) if file_type == "pdf" else False
         uploads.update(
             normalized_upload_id,
+            session_id=session_id,
             next_chunk_index=chunk_index + 1,
             uploaded_bytes=uploaded_bytes,
             stored_path=final_path,
@@ -421,6 +440,7 @@ async def upload_chunk(
 
     uploads.update(
         normalized_upload_id,
+        session_id=session_id,
         next_chunk_index=chunk_index + 1,
         uploaded_bytes=uploaded_bytes,
     )
@@ -435,10 +455,10 @@ async def upload_chunk(
 
 
 @app.delete("/uploads/{upload_id}")
-def delete_uploaded_file(upload_id: str) -> JSONResponse:
+def delete_uploaded_file(request: Request, upload_id: str) -> JSONResponse:
     """Delete a staged upload (temporary or fully assembled)."""
     normalized_upload_id = _validate_upload_id(upload_id)
-    entry = uploads.pop(normalized_upload_id)
+    entry = uploads.pop(normalized_upload_id, request.state.session_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Upload non trovato.")
 
@@ -447,14 +467,15 @@ def delete_uploaded_file(upload_id: str) -> JSONResponse:
 
 
 @app.get("/uploads/{upload_id}/preview")
-def preview_uploaded_file(upload_id: str) -> FileResponse:
+def preview_uploaded_file(request: Request, upload_id: str) -> FileResponse:
     """Serve the uploaded file for post-upload preview."""
-    entry = _require_completed_upload(upload_id)
-    media_type = entry.mime_type or guess_type(entry.filename)[0] or "application/octet-stream"
+    entry = _require_completed_upload(upload_id, request.state.session_id)
+    media_type = guess_type(entry.filename)[0] or "application/octet-stream"
     return FileResponse(
         path=entry.stored_path,
         media_type=media_type,
         content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -462,7 +483,7 @@ def preview_uploaded_file(upload_id: str) -> FileResponse:
 def job_status(request: Request, job_id: str) -> HTMLResponse:
     """Render the latest status for a single print job."""
     job = jobs.get(job_id)
-    if not job:
+    if not job or (job.session_id and job.session_id != request.state.session_id):
         raise HTTPException(status_code=404, detail="Job non trovato")
     return _render_job(request, job)
 
@@ -473,6 +494,9 @@ def process_print_job(job_id: str) -> None:
     if not snapshot:
         return
     if not printer_backend:
+        _cleanup_file_paths(snapshot.stored_path)
+        if snapshot.stored_path:
+            uploads.release_path(snapshot.stored_path)
         jobs.update(
             job_id,
             status="failed",
@@ -538,6 +562,8 @@ def process_print_job(job_id: str) -> None:
                     job_id,
                     message="Stampa completata, ma non riesco a eliminare il file temporaneo.",
                 )
+        if current and current.stored_path:
+            uploads.release_path(current.stored_path)
 
 
 def _render_job(request: Request, job: PrintJob) -> HTMLResponse:
@@ -673,10 +699,10 @@ def _consume_uploaded_file(uploaded_file_id: str) -> UploadedFileEntry:
     return entry
 
 
-def _require_completed_upload(upload_id: str) -> UploadedFileEntry:
+def _require_completed_upload(upload_id: str, session_id: str) -> UploadedFileEntry:
     """Load a completed upload entry or raise HTTP errors."""
     normalized = _validate_upload_id(upload_id)
-    entry = uploads.get(normalized)
+    entry = uploads.get(normalized, session_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Upload non trovato.")
     if not entry.completed or not entry.stored_path:

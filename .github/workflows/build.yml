@@ -59,7 +59,7 @@ jobs:
 
           wheel = next(Path("dist").glob("*.whl"))
           with ZipFile(wheel) as archive:
-              required = {"app.py", "print_backend.py", "templates/index.html", "static/style.css"}
+              required = {"app.py", "print_backend.py", "upload_storage.py", "templates/index.html", "static/style.css"}
               missing = required.difference(archive.namelist())
               if missing:
                   raise SystemExit(f"Missing wheel files: {sorted(missing)}")

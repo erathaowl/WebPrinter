@@ -13,4 +13,11 @@ services:
       PRINTER_ADDRESS: "${PRINTER_ADDRESS}"
       APP_HOST: "0.0.0.0"
       APP_PORT: "8000"
+      WEBPRINTER_DATA_DIR: "/app/data"
+      WEBPRINTER_UPLOAD_TTL_MINUTES: "${WEBPRINTER_UPLOAD_TTL_MINUTES:-60}"
+    volumes:
+      - webprinter_data:/app/data
     restart: unless-stopped
+
+volumes:
+  webprinter_data:

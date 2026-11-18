@@ -62,6 +62,7 @@ You need Docker with the Compose plugin.
    | `PRINTER_NAME` | Name of the CUPS queue to create, such as `Office_IPP` (required). |
    | `PRINTER_ADDRESS` | Printer URI, such as `ipp://192.168.1.50/ipp/print` (required). |
    | `APP_PORT` | HTTP port published on the host (default: `8000`). |
+   | `WEBPRINTER_UPLOAD_TTL_MINUTES` | Minutes before unused uploads expire (default: `60`). |
 
 3. Pull the published image and start the service:
 
@@ -96,7 +97,7 @@ The container installs CUPS tools and filters, starts `cupsd`, waits for it to b
 lpadmin -E -p "$PRINTER_NAME" -v "$PRINTER_ADDRESS" -m everywhere
 ```
 
-It then attempts to enable the queue, accept jobs, and set it as the default, and starts Uvicorn on `0.0.0.0:8000`. In the current Compose configuration, `APP_PORT` in `.env` only changes the host port: the internal port remains `8000`. No persistent volumes are configured for uploads or CUPS configuration.
+It then attempts to enable the queue, accept jobs, and set it as the default, and starts Uvicorn on `0.0.0.0:8000`. In the current Compose configuration, `APP_PORT` in `.env` only changes the host port: the internal port remains `8000`. Docker volume `webprinter_data` persists SQLite and uploads in `/app/data`. CUPS configuration is not persisted.
 
 ## Usage
 
@@ -112,10 +113,10 @@ Job status refreshes every **2 seconds** until completion or failure. The monito
 
 - **“Completed” means the backend has finished submitting the document**, not that it has physically printed. CUPS checks whether the job remains in the local queue for approximately 12 seconds; SumatraPDF reports its own process outcome.
 - Print progress represents submission stages, not the number of pages printed.
-- Files are stored in `uploads/`, created in the working directory. Accepted jobs clean up their source and temporary files, including decrypted PDFs.
+- Files are stored in `/app/data/uploads/` in Docker (or in the directory set with `WEBPRINTER_DATA_DIR`). The `webprinter_data` volume persists both files and SQLite across container restarts and recreation. Completed and failed print jobs remove their source files.
 - Image layout applies only to image files. Images are rendered into temporary A4 PDFs, automatically rotated to match portrait or landscape orientation. Fit leaves a small white margin; Fill crops from the center. Physical edge-to-edge printing still depends on printer margins and driver support. Animated GIFs print their first frame; multi-page TIFFs print all frames.
-- Abandoned or interrupted uploads have no expiration or automatic periodic cleanup. They may remain on disk, especially after the process stops.
-- Jobs and upload metadata are stored only in memory. Use a single Uvicorn process, without multiple `--workers`: registries are not shared. The background pool has two processing threads.
+- Completed uploads expire 60 minutes after upload, regardless of browser activity. Incomplete uploads expire 60 minutes after their last chunk. Cleanup runs on startup and every 5 minutes, including crash-orphaned files. Set `WEBPRINTER_UPLOAD_TTL_MINUTES` to customize the TTL.
+- An `HttpOnly` cookie identifies the browser session. Refreshing or reopening the page restores unexpired uploads. SQLite persists upload metadata, while job status remains in memory. Run one Uvicorn process, without multiple `--workers`. PDF passwords must be reentered after a refresh.
 - Authentication, authorization, and an explicit overall file-size limit are not implemented. The server accepts at most 5,000 chunks per upload; the interface uses 512 KiB, 1 MiB, or 2 MiB chunks depending on file size.
 - Use the application only on a trusted network. Before exposing it to untrusted networks, provide access controls, HTTPS, and request limits, for example through a reverse proxy. Docker Compose publishes the HTTP port without restricting it to localhost.
 

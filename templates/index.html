@@ -14,7 +14,7 @@
     class="page"
     x-data="webPrinterPage({{ 'true' if backend_ready else 'false' }})"
     x-on:print-batch-accepted.window="clearUploadedFiles()"
-    x-init="setupPrinterMonitor()"
+    x-init="setupPrinterMonitor(); loadStagedFiles()"
   >
     <header class="hero">
       <p class="kicker">LOCAL PRINTING</p>

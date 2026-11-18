@@ -47,7 +47,11 @@ def service(monkeypatch, tmp_path):
     monkeypatch.setattr(application, "backend_boot_error", None)
     monkeypatch.setattr(application, "executor", queue)
     monkeypatch.setattr(application, "jobs", application.JobRegistry())
-    monkeypatch.setattr(application, "uploads", application.UploadRegistry())
+    monkeypatch.setattr(
+        application,
+        "uploads",
+        application.UploadRegistry(tmp_path / "uploads.sqlite3", tmp_path),
+    )
     monkeypatch.setattr(application, "UPLOAD_DIR", tmp_path)
     return TestClient(application.app), backend, queue
 

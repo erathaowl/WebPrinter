@@ -62,6 +62,7 @@ Serve Docker con il plugin Compose.
    | `PRINTER_NAME` | Nome della coda CUPS da creare, ad esempio `Office_IPP` (obbligatorio). |
    | `PRINTER_ADDRESS` | URI della stampante, ad esempio `ipp://192.168.1.50/ipp/print` (obbligatorio). |
    | `APP_PORT` | Porta HTTP pubblicata sull'host (predefinita: `8000`). |
+   | `WEBPRINTER_UPLOAD_TTL_MINUTES` | Minuti prima della cancellazione degli upload inutilizzati (predefinito: `60`). |
 
 3. Scarica l'immagine pubblicata e avvia il servizio:
 
@@ -96,7 +97,7 @@ Il container installa gli strumenti CUPS e i filtri, avvia `cupsd`, attende che 
 lpadmin -E -p "$PRINTER_NAME" -v "$PRINTER_ADDRESS" -m everywhere
 ```
 
-Quindi tenta di abilitare la coda, accettare i job e impostarla come predefinita, e avvia Uvicorn su `0.0.0.0:8000`. Nel Compose attuale, `APP_PORT` nel file `.env` cambia solo la porta dell'host: la porta interna resta `8000`. Non sono configurati volumi persistenti per upload o configurazione CUPS.
+Quindi tenta di abilitare la coda, accettare i job e impostarla come predefinita, e avvia Uvicorn su `0.0.0.0:8000`. Nel Compose attuale, `APP_PORT` nel file `.env` cambia solo la porta dell'host: la porta interna resta `8000`. Il volume Docker `webprinter_data` conserva SQLite e gli upload in `/app/data`. La configurazione CUPS non è persistente.
 
 ## Utilizzo
 
@@ -112,10 +113,10 @@ Lo stato del job viene aggiornato ogni **2 secondi**, fino al completamento o al
 
 - **“Completato” indica che il backend ha terminato l'invio**, non che il documento sia stato fisicamente stampato. CUPS controlla la presenza del job nella coda locale per circa 12 secondi; SumatraPDF segnala l'esito del proprio processo.
 - L'avanzamento di stampa rappresenta le fasi dell'invio, non il numero di pagine stampate.
-- I file sono salvati in `uploads/`, creata nella directory di lavoro. Al termine dell'elaborazione dei job vengono eliminati i sorgenti e i file temporanei, inclusi i PDF decriptati.
+- I file sono salvati in `/app/data/uploads/` nel container (o nella directory configurata da `WEBPRINTER_DATA_DIR`). Il volume `webprinter_data` conserva file e database SQLite fra i riavvii e le ricreazioni del container. I job terminati eliminano i file anche in caso di errore.
 - L'adattamento si applica solo alle immagini: vengono convertite in PDF A4 temporanei, con orientamento verticale/orizzontale automatico. **Adatta** lascia un piccolo margine bianco; **Riempi** ritaglia al centro. La stampa senza bordi fisici dipende dalla stampante e dal driver. Per i GIF animati si stampa il primo fotogramma; per i TIFF multipagina si stampano tutte le pagine.
-- Gli upload abbandonati o interrotti non hanno una scadenza né una pulizia periodica automatica. Possono rimanere su disco, specialmente dopo un arresto del processo.
-- Job e metadati degli upload sono conservati solo in memoria. Usa un solo processo Uvicorn, senza `--workers` multipli: i registri non sono condivisi. Il pool in background ha due thread di elaborazione.
+- Gli upload completati scadono 60 minuti dopo il caricamento, indipendentemente dall'attività del browser; per quelli parziali la scadenza parte dall'ultimo blocco ricevuto. Una pulizia viene eseguita all'avvio e ogni 5 minuti, rimuovendo anche file orfani. Il timeout è configurabile con `WEBPRINTER_UPLOAD_TTL_MINUTES`.
+- Un cookie `HttpOnly` identifica la sessione del browser. Refresh e riapertura della pagina recuperano i file ancora validi. I metadati degli upload sono persistiti in SQLite; i job rimangono in memoria. Usa un solo processo Uvicorn, senza `--workers` multipli. Le password dei PDF vanno reinserite dopo il refresh.
 - Non sono implementati autenticazione, autorizzazione o un limite complessivo esplicito alla dimensione dei file. Il server accetta al massimo 5.000 blocchi per upload; l'interfaccia usa blocchi da 512 KiB, 1 MiB o 2 MiB in base alla dimensione del file.
 - Usa l'applicazione solo in una rete fidata. Prima di esporla su reti non fidate, predisponi controlli di accesso, HTTPS e limiti alle richieste, ad esempio tramite reverse proxy. Docker Compose pubblica la porta HTTP senza limitarla a localhost.
 
