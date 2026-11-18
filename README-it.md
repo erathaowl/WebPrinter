@@ -63,6 +63,10 @@ Serve Docker con il plugin Compose.
    | `PRINTER_ADDRESS` | URI della stampante, ad esempio `ipp://192.168.1.50/ipp/print` (obbligatorio). |
    | `APP_PORT` | Porta HTTP pubblicata sull'host (predefinita: `8000`). |
    | `WEBPRINTER_UPLOAD_TTL_MINUTES` | Minuti prima della cancellazione degli upload inutilizzati (predefinito: `60`). |
+   | `WEBPRINTER_ARCHIVE_MODE` | `disabled` (default), `opt_in`, `opt_out`, `always`. |
+   | `WEBPRINTER_ARCHIVE_DIR` | Cartella archivio permanente (predefinita: `/app/data/archive`). |
+   | `WEBPRINTER_ARCHIVE_EXPIRED_UPLOADS` | Conserva gli upload completi scaduti in `opt_out` e `always` (default: `false`). |
+   | `WEBPRINTER_ARCHIVE_PDF_PASSWORDS` | Salva nel report le password PDF fornite in chiaro (default: `false`). |
 
 3. Scarica l'immagine pubblicata e avvia il servizio:
 
@@ -108,6 +112,21 @@ Quindi tenta di abilitare la coda, accettare i job e impostarla come predefinita
 5. Controlla l'esito di ciascun job nel pannello di stato.
 
 Lo stato del job viene aggiornato ogni **2 secondi**, fino al completamento o all'errore. Il monitor viene caricato all'apertura della pagina e al cambio stampante, poi aggiornato ogni **30 secondi**; il pulsante accanto alla data dell'ultimo aggiornamento consente di disattivare o riattivare il refresh automatico.
+
+## Archiviazione permanente
+
+Il salvataggio permanente è disabilitato per impostazione predefinita. `WEBPRINTER_ARCHIVE_MODE` controlla la scelta disponibile:
+
+- `disabled`: nessun salvataggio e nessuna opzione nell'interfaccia.
+- `opt_in`: checkbox inizialmente deselezionata; l'utente può salvare il lotto.
+- `opt_out`: checkbox inizialmente selezionata; l'utente può rinunciare.
+- `always`: tutti i lotti vengono salvati; nessun controllo nell'interfaccia.
+
+Ogni invio in stampa crea una cartella `jobs/YYYYMMDDTHHMMSSZ_<batch-uuid>/` contenente `files/` con gli originali e `report.json` (timestamp, hash della sessione, IP client, stampante, impostazioni, hash SHA-256 dei file ed esito individuale). Il report viene aggiornato al termine di ogni job; `submitted` significa inviato alla coda di stampa, non stampato fisicamente. Eventuali job interrotti da un riavvio vengono segnalati come `interrupted` all'avvio successivo.
+
+Se `WEBPRINTER_ARCHIVE_EXPIRED_UPLOADS=true` e la modalità è `opt_out` oppure `always`, gli upload **completati** e mai stampati vengono spostati logicamente nell'archivio permanente `expired/` prima della normale pulizia. I caricamenti incompleti vengono eliminati. La regola sugli upload scaduti è indipendente dalla checkbox dei job.
+
+**Riservatezza:** `WEBPRINTER_ARCHIVE_PDF_PASSWORDS=true` inserisce le password PDF fornite nel `report.json` **in chiaro**. Lascia la variabile disabilitata se non ti serve questa informazione. I file archivio non sono serviti tramite HTTP e i permessi delle cartelle/file sono ristretti al processo; proteggi comunque il volume, i backup e gli accessi amministrativi. Se imposti una cartella di archivio esterna a `/app/data`, aggiungi un volume persistente dedicato al Compose.
 
 ## Comportamento e limiti attuali
 

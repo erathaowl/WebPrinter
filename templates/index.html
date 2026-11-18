@@ -234,6 +234,22 @@
           <small class="field-note">Adatta conserva l'intera immagine. Riempi può ritagliare i bordi.</small>
         </fieldset>
 
+        {% if archive_mode in ("opt_in", "opt_out") %}
+          <label class="inline-option toggle">
+            <input
+              type="checkbox"
+              name="archive_job"
+              value="true"
+              {% if archive_default %}checked{% endif %}
+              {% if not backend_ready %}disabled{% endif %}
+            >
+            <span>Conserva permanentemente documenti e report</span>
+          </label>
+          {% if archive_expired_notice %}
+            <small class="field-note">I file caricati e non stampati possono essere archiviati alla scadenza, secondo la configurazione del server.</small>
+          {% endif %}
+        {% endif %}
+
         <button
           type="submit"
           class="btn"

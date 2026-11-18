@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock
-from typing import Optional
+from typing import Callable, Optional
 
 
 DATA_DIR = Path(os.getenv("WEBPRINTER_DATA_DIR", str(Path.cwd() / "data")))
@@ -32,6 +33,7 @@ class UploadedFileEntry:
     stored_path: Optional[Path] = None
     completed: bool = False
     updated_at: float = field(default_factory=time.time)
+    client_ip: str = ""
 
 
 class UploadRegistry:
@@ -65,9 +67,13 @@ class UploadRegistry:
                     uploaded_bytes INTEGER NOT NULL,
                     stored_path TEXT,
                     completed INTEGER NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    client_ip TEXT NOT NULL DEFAULT ''
                 )"""
             )
+            columns = {row[1] for row in database.execute("PRAGMA table_info(uploads)")}
+            if "client_ip" not in columns:
+                database.execute("ALTER TABLE uploads ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''")
             rows = database.execute("SELECT * FROM uploads").fetchall()
         for row in rows:
             entry = UploadedFileEntry(
@@ -82,13 +88,14 @@ class UploadRegistry:
                 stored_path=Path(row[8]) if row[8] else None,
                 completed=bool(row[9]),
                 updated_at=row[10],
+                client_ip=row[11],
             )
             self._uploads[entry.id] = entry
 
     def _save(self, entry: UploadedFileEntry) -> None:
         with sqlite3.connect(self.db_path) as database:
             database.execute(
-                """INSERT OR REPLACE INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT OR REPLACE INTO uploads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     entry.id,
                     entry.session_id,
@@ -101,6 +108,7 @@ class UploadRegistry:
                     str(entry.stored_path) if entry.stored_path else None,
                     int(entry.completed),
                     entry.updated_at,
+                    entry.client_ip,
                 ),
             )
 
@@ -188,8 +196,12 @@ class UploadRegistry:
         with self._lock:
             self._busy_paths.discard(path)
 
-    def cleanup_expired(self, now: Optional[float] = None) -> int:
-        """Remove expired staged uploads and abandoned files left by crashes."""
+    def cleanup_expired(
+        self,
+        now: Optional[float] = None,
+        archive_expired: Optional[Callable[[list[UploadedFileEntry]], None]] = None,
+    ) -> int:
+        """Expire staged files; retain complete files if archival fails."""
         current = time.time() if now is None else now
         cutoff = current - self.ttl_seconds
         removed = 0
@@ -198,6 +210,22 @@ class UploadRegistry:
                 entry for entry in self._uploads.values()
                 if entry.updated_at <= cutoff
             ]
+            archive_groups: dict[str, list[UploadedFileEntry]] = defaultdict(list)
+            if archive_expired:
+                for entry in expired:
+                    if entry.completed and entry.stored_path and entry.stored_path.is_file():
+                        archive_groups[entry.session_id].append(entry)
+
+            preserved = set()
+            for group in archive_groups.values():
+                try:
+                    archive_expired([replace(entry) for entry in group])
+                except Exception:
+                    preserved.update(entry.id for entry in group)
+                    import logging
+                    logging.getLogger("webprinter").exception("Failed to archive expired uploads")
+
+            expired = [entry for entry in expired if entry.id not in preserved]
             if expired:
                 self._remove([entry.id for entry in expired])
             for entry in expired:

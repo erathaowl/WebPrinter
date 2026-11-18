@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pypdf import PdfReader, PdfWriter
 
+from archive_storage import ArchiveConfig, ArchiveManager
 from upload_storage import UPLOAD_DIR, UploadRegistry, UploadedFileEntry
 
 from print_backend import (
@@ -83,6 +84,7 @@ class PrintJob:
     duplex: bool
     image_mode: str = "fit"
     session_id: str = ""
+    archive_path: Optional[Path] = None
     status: str = "queued"
     progress: int = 5
     message: str = "File ricevuto, in coda."
@@ -128,6 +130,8 @@ COOKIE_MAX_AGE = 30 * 24 * 60 * 60
 logger = logging.getLogger("webprinter")
 jobs = JobRegistry()
 uploads = UploadRegistry()
+archive_config = ArchiveConfig.from_env()
+archives = ArchiveManager(archive_config)
 executor = ThreadPoolExecutor(max_workers=2)
 printer_backend, backend_boot_error = build_backend()
 cleanup_stop = Event()
@@ -156,11 +160,17 @@ async def session_cookie(request: Request, call_next):
     return response
 
 
+def cleanup_uploads() -> None:
+    """Remove expired uploads, or archive completed ones when configured."""
+    callback = archives.archive_expired if archive_config.archive_expired else None
+    uploads.cleanup_expired(archive_expired=callback)
+
+
 def cleanup_loop() -> None:
-    """Discard abandoned uploads periodically, even without active browsers."""
+    """Process abandoned uploads independently of active browsers."""
     while not cleanup_stop.wait(300):
         try:
-            uploads.cleanup_expired()
+            cleanup_uploads()
         except Exception:
             logger.exception("Upload cleanup failed")
 
@@ -168,7 +178,9 @@ def cleanup_loop() -> None:
 @app.on_event("startup")
 def start_upload_cleanup() -> None:
     global cleanup_thread
-    uploads.cleanup_expired()
+    if archive_config.mode != "disabled":
+        archives.reconcile_interrupted()
+    cleanup_uploads()
     cleanup_stop.clear()
     cleanup_thread = Thread(target=cleanup_loop, name="upload-cleanup", daemon=True)
     cleanup_thread.start()
@@ -206,6 +218,9 @@ def index(request: Request) -> HTMLResponse:
             "default_printer": default_printer,
             "backend_ready": bool(printer_backend),
             "backend_error": backend_error,
+            "archive_mode": archive_config.mode,
+            "archive_default": archive_config.default_enabled,
+            "archive_expired_notice": archive_config.archive_expired,
         },
     )
 
@@ -257,6 +272,7 @@ def create_job(
     duplex: Optional[str] = Form(None),
     image_mode: str = Form("fit"),
     pdf_passwords: str = Form("{}"),
+    archive_job: Optional[str] = Form(None),
 ) -> HTMLResponse:
     """Validate and queue an entire batch with shared print settings."""
     if printer_backend is None:
@@ -267,6 +283,7 @@ def create_job(
 
     prepared_paths: list[tuple[Path, Path]] = []
     consumed = False
+    archive_path: Optional[Path] = None
     try:
         if not uploaded_file_id or len(uploaded_file_id) > MAX_BATCH_FILES:
             raise ValueError(f"Seleziona da 1 a {MAX_BATCH_FILES} file.")
@@ -298,16 +315,38 @@ def create_job(
             prepared = _prepare_pdf_for_print(source, passwords.get(entry.id))
             prepared_paths.append((source, prepared))
 
+        job_ids = [uuid.uuid4().hex for _ in entries]
+        if archive_config.enabled_for_job(_as_bool(archive_job)):
+            batch_id = uuid.uuid4().hex
+            try:
+                archive_path = archives.create_job_archive(
+                    entries=entries,
+                    job_ids=job_ids,
+                    batch_id=batch_id,
+                    session_id=request.state.session_id,
+                    client_ip=request.client.host if request.client else "",
+                    printer=printer,
+                    settings={
+                        "color_mode": validated_color,
+                        "copies": validated_copies,
+                        "duplex": _as_bool(duplex),
+                        "image_mode": validated_image_mode,
+                    },
+                    passwords=passwords,
+                )
+            except OSError as exc:
+                raise ValueError(f"Impossibile archiviare i documenti: {exc}") from exc
+
         uploads.pop_many(ids, request.state.session_id)
         consumed = True
 
         queued_jobs = []
-        for entry, (source, prepared) in zip(entries, prepared_paths):
+        for entry, job_id, (source, prepared) in zip(entries, job_ids, prepared_paths):
             if prepared != source:
                 uploads.transfer_path(source, prepared)
                 source.unlink(missing_ok=True)
             job = PrintJob(
-                id=uuid.uuid4().hex,
+                id=job_id,
                 filename=entry.filename,
                 stored_path=prepared,
                 printer=printer,
@@ -316,6 +355,7 @@ def create_job(
                 duplex=_as_bool(duplex),
                 image_mode=validated_image_mode,
                 session_id=request.state.session_id,
+                archive_path=archive_path,
                 status="queued",
                 progress=8,
                 message="File in attesa di stampa.",
@@ -327,8 +367,10 @@ def create_job(
         html = "".join(_render_job(request, job).body.decode("utf-8") for job in queued_jobs)
         return HTMLResponse(html, headers={"HX-Trigger": "print-batch-accepted"})
 
-    except (ValueError, PrintBackendError, HTTPException, json.JSONDecodeError) as exc:
+    except (ValueError, PrintBackendError, HTTPException, json.JSONDecodeError, OSError) as exc:
         if not consumed:
+            if archive_path:
+                archives.discard_archive(archive_path)
             for source, prepared in prepared_paths:
                 if prepared != source:
                     _cleanup_file_paths(prepared)
@@ -386,6 +428,7 @@ async def upload_chunk(
             session_id=session_id,
             filename=filename,
             mime_type=mime_type or "application/octet-stream",
+            client_ip=request.client.host if request.client else "",
             temp_path=part_path,
             total_chunks=total_chunks,
         )
@@ -504,6 +547,7 @@ def process_print_job(job_id: str) -> None:
             message="Backend non disponibile.",
             error=backend_boot_error or "Configura un backend di stampa valido.",
         )
+        update_archived_job(job_id)
         return
 
     jobs.update(job_id, status="preparing", progress=20, message="Preparazione del file.")
@@ -564,6 +608,20 @@ def process_print_job(job_id: str) -> None:
                 )
         if current and current.stored_path:
             uploads.release_path(current.stored_path)
+        update_archived_job(job_id)
+
+
+def update_archived_job(job_id: str) -> None:
+    """Store a final spooler outcome without interrupting cleanup."""
+    job = jobs.get(job_id)
+    if not job or not job.archive_path:
+        return
+    try:
+        archives.update_job(
+            job.archive_path, job.id, job.status, job.printer_job_id, job.error
+        )
+    except (OSError, ValueError, KeyError) as exc:
+        logger.exception("Failed to update job archive %s: %s", job.id, exc)
 
 
 def _render_job(request: Request, job: PrintJob) -> HTMLResponse:

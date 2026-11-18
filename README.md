@@ -63,6 +63,10 @@ You need Docker with the Compose plugin.
    | `PRINTER_ADDRESS` | Printer URI, such as `ipp://192.168.1.50/ipp/print` (required). |
    | `APP_PORT` | HTTP port published on the host (default: `8000`). |
    | `WEBPRINTER_UPLOAD_TTL_MINUTES` | Minutes before unused uploads expire (default: `60`). |
+   | `WEBPRINTER_ARCHIVE_MODE` | `disabled` (default), `opt_in`, `opt_out`, `always`. |
+   | `WEBPRINTER_ARCHIVE_DIR` | Permanent archive directory (default: `/app/data/archive`). |
+   | `WEBPRINTER_ARCHIVE_EXPIRED_UPLOADS` | Preserve completed expired uploads in `opt_out` and `always` (default: `false`). |
+   | `WEBPRINTER_ARCHIVE_PDF_PASSWORDS` | Store supplied PDF passwords as plaintext in reports (default: `false`). |
 
 3. Pull the published image and start the service:
 
@@ -108,6 +112,21 @@ It then attempts to enable the queue, accept jobs, and set it as the default, an
 5. Follow each document's separate print job in the status panel.
 
 Job status refreshes every **2 seconds** until completion or failure. The monitor loads when the page opens and when the printer changes, then refreshes every **30 seconds**; the button beside the last-update timestamp toggles automatic refresh off or on.
+
+## Permanent job archives
+
+Permanent archiving is disabled by default. `WEBPRINTER_ARCHIVE_MODE` controls how it works:
+
+- `disabled`: no archive, no UI control.
+- `opt_in`: unchecked checkbox; the user can preserve the batch.
+- `opt_out`: checked checkbox; the user can decline archiving.
+- `always`: every submitted batch is archived with no UI control.
+
+Each batch creates `jobs/YYYYMMDDTHHMMSSZ_<batch-uuid>/` with original documents in `files/` and `report.json` (timestamps, hashed session ID, client IP, printer, common settings, file SHA-256 values, and each document's outcome). Reports are updated after each job; `submitted` means accepted by the spooler rather than physically printed. Incomplete archives are marked `interrupted` on startup after a restart.
+
+When `WEBPRINTER_ARCHIVE_EXPIRED_UPLOADS=true` in `opt_out` or `always`, completed unused uploads are retained under `expired/` instead of being deleted at timeout. Incomplete uploads are deleted normally. This expiry policy is independent of the user's print-job checkbox.
+
+**Privacy:** setting `WEBPRINTER_ARCHIVE_PDF_PASSWORDS=true` writes supplied PDF passwords **in plaintext** to `report.json`. Keep it disabled unless required. Archives are not exposed via HTTP and have restricted filesystem permissions, but the volume and its backups still require protection. If the archive directory is outside `/app/data`, mount an additional persistent volume.
 
 ## Current behavior and limitations
 

@@ -1,6 +1,6 @@
 [project]
 name = "webprinter"
-version = "1.1.0"
+version = "1.2.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,4 +19,4 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["app.py", "print_backend.py", "upload_storage.py", "static", "templates"]
+only-include = ["app.py", "print_backend.py", "upload_storage.py", "archive_storage.py", "static", "templates"]
